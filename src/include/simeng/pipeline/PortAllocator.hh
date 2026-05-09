@@ -16,7 +16,7 @@ const uint8_t OPTIONAL = 1;
 /** An abstract execution port allocator interface. */
 class PortAllocator {
  public:
-  virtual ~PortAllocator(){};
+  virtual ~PortAllocator() {};
 
   /** Allocate a port for the specified instruction group; returns the allocated
    * port. */
@@ -33,7 +33,7 @@ class PortAllocator {
   /** Set function from DispatchIssueUnit to retrieve reservation
    * station sizes during execution. */
   virtual void setRSSizeGetter(
-      std::function<void(std::vector<uint64_t>&)> rsSizes) = 0;
+      std::function<void(std::vector<uint32_t>&)> rsSizes) = 0;
 
   /** Tick the port allocator to allow it to process internal tasks. */
   virtual void tick() = 0;

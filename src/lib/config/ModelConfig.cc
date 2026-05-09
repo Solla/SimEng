@@ -367,16 +367,16 @@ void ModelConfig::setExpectations(bool isDefault) {
       std::vector{false, true});
 
   if (isa_ == ISA::AArch64) {
-    expectations_["Core"].addChild(ExpectationNode::createExpectation<uint64_t>(
+    expectations_["Core"].addChild(ExpectationNode::createExpectation<uint16_t>(
         128, "Vector-Length", true));
     expectations_["Core"]["Vector-Length"].setValueSet(
-        std::vector<uint64_t>{128, 256, 384, 512, 640, 768, 896, 1024, 1152,
+        std::vector<uint16_t>{128, 256, 384, 512, 640, 768, 896, 1024, 1152,
                               1280, 1408, 1536, 1664, 1792, 1920, 2048});
 
-    expectations_["Core"].addChild(ExpectationNode::createExpectation<uint64_t>(
+    expectations_["Core"].addChild(ExpectationNode::createExpectation<uint16_t>(
         128, "Streaming-Vector-Length", true));
     expectations_["Core"]["Streaming-Vector-Length"].setValueSet(
-        std::vector<uint64_t>{128, 256, 512, 1024, 2048});
+        std::vector<uint16_t>{128, 256, 512, 1024, 2048});
   }
 
   // Fetch
@@ -450,9 +450,16 @@ void ModelConfig::setExpectations(bool isDefault) {
         1, UINT16_MAX);
 
     expectations_["Register-Set"].addChild(
-        ExpectationNode::createExpectation<uint16_t>(1, "Matrix-Count", true));
-    expectations_["Register-Set"]["Matrix-Count"].setValueBounds<uint16_t>(
+        ExpectationNode::createExpectation<uint16_t>(1, "SME-Matrix-Count",
+                                                     true));
+    expectations_["Register-Set"]["SME-Matrix-Count"].setValueBounds<uint16_t>(
         1, UINT16_MAX);
+
+    expectations_["Register-Set"].addChild(
+        ExpectationNode::createExpectation<uint16_t>(
+            1, "SME-Lookup-Table-Count", true));
+    expectations_["Register-Set"]["SME-Lookup-Table-Count"]
+        .setValueBounds<uint16_t>(1, UINT16_MAX);
   } else if (isa_ == ISA::RV64) {
     // TODO: Reduce to 32 once renaming issue has been sorted. Also replace in
     // ConfigTest.
@@ -506,6 +513,13 @@ void ModelConfig::setExpectations(bool isDefault) {
       ExpectationNode::createExpectation<uint32_t>(16, "Store"));
   expectations_["Queue-Sizes"]["Store"].setValueBounds<uint32_t>(1, UINT32_MAX);
 
+  // Port-Allocator
+  expectations_.addChild(ExpectationNode::createExpectation("Port-Allocator"));
+  expectations_["Port-Allocator"].addChild(
+      ExpectationNode::createExpectation<std::string>("Balanced", "Type"));
+  expectations_["Port-Allocator"]["Type"].setValueSet(
+      std::vector<std::string>{"Balanced", "A64FX", "M1"});
+
   // Branch-Predictor
   expectations_.addChild(
       ExpectationNode::createExpectation("Branch-Predictor"));
@@ -513,7 +527,7 @@ void ModelConfig::setExpectations(bool isDefault) {
   expectations_["Branch-Predictor"].addChild(
       ExpectationNode::createExpectation<std::string>("Perceptron", "Type"));
   expectations_["Branch-Predictor"]["Type"].setValueSet(
-      std::vector<std::string>{"Generic", "Perceptron"});
+      std::vector<std::string>{"Generic", "Perceptron", "TAGE"});
 
   expectations_["Branch-Predictor"].addChild(
       ExpectationNode::createExpectation<uint8_t>(8, "BTB-Tag-Bits"));
@@ -523,7 +537,7 @@ void ModelConfig::setExpectations(bool isDefault) {
   expectations_["Branch-Predictor"].addChild(
       ExpectationNode::createExpectation<uint16_t>(8, "Global-History-Length"));
   expectations_["Branch-Predictor"]["Global-History-Length"]
-      .setValueBounds<uint16_t>(1, UINT16_MAX);
+      .setValueBounds<uint16_t>(1, 32);
 
   expectations_["Branch-Predictor"].addChild(
       ExpectationNode::createExpectation<uint16_t>(8, "RAS-entries"));
@@ -539,8 +553,10 @@ void ModelConfig::setExpectations(bool isDefault) {
       // Ensure the key "Branch-Predictor:Type" exists before querying the
       // associated YAML node
       if (configTree_["Branch-Predictor"].has_child(ryml::to_csubstr("Type"))) {
-        if (configTree_["Branch-Predictor"]["Type"].as<std::string>() ==
-            "Generic") {
+        if ((configTree_["Branch-Predictor"]["Type"].as<std::string>() ==
+             "Generic") ||
+            (configTree_["Branch-Predictor"]["Type"].as<std::string>() ==
+             "TAGE")) {
           expectations_["Branch-Predictor"].addChild(
               ExpectationNode::createExpectation<uint8_t>(
                   2, "Saturating-Count-Bits"));
@@ -553,6 +569,25 @@ void ModelConfig::setExpectations(bool isDefault) {
           expectations_["Branch-Predictor"]["Fallback-Static-Predictor"]
               .setValueSet(
                   std::vector<std::string>{"Always-Taken", "Always-Not-Taken"});
+        }
+        if ((configTree_["Branch-Predictor"]["Type"].as<std::string>() ==
+             "TAGE")) {
+          expectations_["Branch-Predictor"].addChild(
+              ExpectationNode::createExpectation<uint8_t>(12,
+                                                          "TAGE-Table-Bits"));
+          expectations_["Branch-Predictor"]["TAGE-Table-Bits"]
+              .setValueBounds<uint8_t>(1, UINT8_MAX);
+
+          expectations_["Branch-Predictor"].addChild(
+              ExpectationNode::createExpectation<uint8_t>(6,
+                                                          "Num-TAGE-Tables"));
+          expectations_["Branch-Predictor"]["Num-TAGE-Tables"]
+              .setValueBounds<uint8_t>(1, UINT8_MAX);
+
+          expectations_["Branch-Predictor"].addChild(
+              ExpectationNode::createExpectation<uint8_t>(8, "Tag-Length"));
+          expectations_["Branch-Predictor"]["Tag-Length"]
+              .setValueBounds<uint8_t>(1, UINT8_MAX);
         }
       } else {
         std::cerr << "[SimEng:ModelConfig] Attempted to access config key "
@@ -662,7 +697,7 @@ void ModelConfig::setExpectations(bool isDefault) {
   // Get the upper bound of what the opcode value can be based on the ISA
   uint16_t maxOpcode = 0;
   if (isa_ == ISA::AArch64) {
-    maxOpcode = arch::aarch64::Opcode::AArch64_INSTRUCTION_LIST_END;
+    maxOpcode = arch::aarch64::Opcode::INSTRUCTION_LIST_END;
   } else if (isa_ == ISA::RV64) {
     maxOpcode = arch::riscv::Opcode::RISCV_INSTRUCTION_LIST_END;
   }
@@ -716,9 +751,9 @@ void ModelConfig::setExpectations(bool isDefault) {
       ExpectationNode::createExpectation<uint16_t>(0, wildcard));
 
   expectations_["Reservation-Stations"][wildcard].addChild(
-      ExpectationNode::createExpectation<uint16_t>(32, "Size"));
+      ExpectationNode::createExpectation<uint32_t>(32, "Size"));
   expectations_["Reservation-Stations"][wildcard]["Size"]
-      .setValueBounds<uint16_t>(1, UINT16_MAX);
+      .setValueBounds<uint32_t>(1, UINT32_MAX);
 
   expectations_["Reservation-Stations"][wildcard].addChild(
       ExpectationNode::createExpectation<uint16_t>(4, "Dispatch-Rate"));
@@ -959,7 +994,7 @@ void ModelConfig::postValidation() {
           groupInheritance.end()) {
         std::vector<uint16_t> inheritedGroups =
             groupInheritance.at(blockingGroups.front());
-        for (int k = 0; k < inheritedGroups.size(); k++) {
+        for (size_t k = 0; k < inheritedGroups.size(); k++) {
           blockingGroups.push(inheritedGroups[k]);
           node["Blocking-Group-Nums"].append_child() << inheritedGroups[k];
         }
@@ -1008,7 +1043,7 @@ void ModelConfig::postValidation() {
     } else {
       node.append_child() << ryml::key("Port-Nums") |= ryml::SEQ;
     }
-    for (int i = 0; i < node["Ports"].num_children(); i++) {
+    for (size_t i = 0; i < node["Ports"].num_children(); i++) {
       std::string portname = node["Ports"][i].as<std::string>();
       std::vector<std::string>::iterator itr =
           std::find(portnames.begin(), portnames.end(), portname);
@@ -1234,7 +1269,7 @@ void ModelConfig::createGroupMapping() {
   // uint16_t starting from 0. Therefore, the index of each groupOptions_
   // entry is also its <isa>::InstructionGroups value (assuming groupOptions_
   // is ordered exactly as <isa>::InstructionGroups is).
-  for (int grp = 0; grp < groupOptions_.size(); grp++) {
+  for (size_t grp = 0; grp < groupOptions_.size(); grp++) {
     groupMapping_[groupOptions_[grp]] = grp;
   }
 }

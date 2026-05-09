@@ -79,13 +79,13 @@ class AArch64ArchitectureTest : public testing::Test {
   })YAML");
 
   // fdivr z1.s, p0/m, z1.s, z0.s
-  std::array<uint8_t, 4> validInstrBytes = {0x01, 0x80, 0x8c, 0x65};
-  std::array<uint8_t, 4> invalidInstrBytes = {0x20, 0x00, 0x02, 0x8c};
+  const std::array<uint8_t, 4> validInstrBytes = {0x01, 0x80, 0x8c, 0x65};
+  const std::array<uint8_t, 4> invalidInstrBytes = {0x20, 0x00, 0x02, 0x8c};
 
   std::unique_ptr<Architecture> arch;
   kernel::Linux kernel;
   kernel::LinuxProcess process = kernel::LinuxProcess(
-      span((char*)validInstrBytes.data(), validInstrBytes.size()));
+      span(validInstrBytes.data(), validInstrBytes.size()));
 };
 
 TEST_F(AArch64ArchitectureTest, predecode) {
@@ -117,6 +117,7 @@ TEST_F(AArch64ArchitectureTest, predecode) {
   EXPECT_EQ(result, 4);
   EXPECT_EQ(output[0]->getInstructionAddress(), 0x4);
   EXPECT_EQ(output[0]->exceptionEncountered(), false);
+  EXPECT_EQ(output[0]->getGroup(), InstructionGroups::SVE_DIV_OR_SQRT);
 }
 
 TEST_F(AArch64ArchitectureTest, getSystemRegisterTag) {
@@ -125,7 +126,7 @@ TEST_F(AArch64ArchitectureTest, getSystemRegisterTag) {
   EXPECT_EQ(output, -1);
 
   // Test for correct behaviour
-  output = arch->getSystemRegisterTag(ARM64_SYSREG_DCZID_EL0);
+  output = arch->getSystemRegisterTag(AARCH64_SYSREG_DCZID_EL0);
   EXPECT_EQ(output, 0);
 }
 
@@ -142,7 +143,7 @@ TEST_F(AArch64ArchitectureTest, handleException) {
             InstructionException::EncodingUnallocated);
 
   // Get Core
-  std::string executablePath = "";
+  std::string executablePath = SIMENG_SOURCE_DIR "/SimEngDefaultProgram";
   std::vector<std::string> executableArgs = {};
   std::unique_ptr<CoreInstance> coreInstance =
       std::make_unique<CoreInstance>(executablePath, executableArgs);
@@ -162,7 +163,7 @@ TEST_F(AArch64ArchitectureTest, getInitialState) {
   std::vector<Register> regs = {
       {RegisterType::GENERAL, 31},
       {RegisterType::SYSTEM,
-       (uint16_t)arch->getSystemRegisterTag(ARM64_SYSREG_DCZID_EL0)}};
+       (uint16_t)arch->getSystemRegisterTag(AARCH64_SYSREG_DCZID_EL0)}};
   std::vector<RegisterValue> regVals = {{kernel.getInitialStackPointer(), 8},
                                         {20, 8}};
 
@@ -202,13 +203,13 @@ TEST_F(AArch64ArchitectureTest, updateSystemTimerRegisters) {
     EXPECT_EQ(
         regFile
             .get({RegisterType::SYSTEM, (uint16_t)arch->getSystemRegisterTag(
-                                            ARM64_SYSREG_PMCCNTR_EL0)})
+                                            AARCH64_SYSREG_PMCCNTR_EL0)})
             .get<uint64_t>(),
         i);
     EXPECT_EQ(
         regFile
             .get({RegisterType::SYSTEM, (uint16_t)arch->getSystemRegisterTag(
-                                            ARM64_SYSREG_CNTVCT_EL0)})
+                                            AARCH64_SYSREG_CNTVCT_EL0)})
             .get<uint64_t>(),
         vctCount);
   }
@@ -237,6 +238,23 @@ TEST_F(AArch64ArchitectureTest, get_set_SVCRVal) {
   EXPECT_EQ(arch->getSVCRval(), 0);
   arch->setSVCRval(3);
   EXPECT_EQ(arch->getSVCRval(), 3);
+}
+
+TEST_F(AArch64ArchitectureTest, isSM_ZA_enabled) {
+  EXPECT_FALSE(arch->isStreamingModeEnabled());
+  EXPECT_FALSE(arch->isZARegisterEnabled());
+  arch->setSVCRval(1);
+  EXPECT_TRUE(arch->isStreamingModeEnabled());
+  EXPECT_FALSE(arch->isZARegisterEnabled());
+  arch->setSVCRval(2);
+  EXPECT_FALSE(arch->isStreamingModeEnabled());
+  EXPECT_TRUE(arch->isZARegisterEnabled());
+  arch->setSVCRval(3);
+  EXPECT_TRUE(arch->isStreamingModeEnabled());
+  EXPECT_TRUE(arch->isZARegisterEnabled());
+  arch->setSVCRval(0);
+  EXPECT_FALSE(arch->isStreamingModeEnabled());
+  EXPECT_FALSE(arch->isZARegisterEnabled());
 }
 
 }  // namespace aarch64

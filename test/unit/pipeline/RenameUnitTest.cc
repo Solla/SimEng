@@ -43,8 +43,8 @@ class RenameUnitTest : public testing::Test {
   const Register r1 = {1, 2};
   const Register r2 = {2, 4};
 
-  const unsigned int robSize = 8;
-  const unsigned int lsqQueueSize = 10;
+  const uint64_t robSize = 8;
+  const uint64_t lsqQueueSize = 10;
 
   PipelineBuffer<std::shared_ptr<Instruction>> input;
   PipelineBuffer<std::shared_ptr<Instruction>> output;
@@ -195,7 +195,7 @@ TEST_F(RenameUnitTest, noFreeRegs) {
 // Tests that when ROB is full, no renaming occurs
 TEST_F(RenameUnitTest, fullROB) {
   // Pre-fill ROB
-  for (int i = 0; i < robSize; i++) {
+  for (uint64_t i = 0; i < robSize; i++) {
     rob.reserve(uopPtr);
   }
   EXPECT_EQ(rob.getFreeSpace(), 0);
@@ -263,7 +263,7 @@ TEST_F(RenameUnitTest, loadUop) {
 // Test a LOAD instruction is handled correctly when Load queue is full
 TEST_F(RenameUnitTest, loadUopQueueFull) {
   // pre-fill Load Queue
-  for (int i = 0; i < lsqQueueSize; i++) {
+  for (uint64_t i = 0; i < lsqQueueSize; i++) {
     lsq.addLoad(uopPtr);
   }
   EXPECT_EQ(lsq.getLoadQueueSpace(), 0);
@@ -349,7 +349,7 @@ TEST_F(RenameUnitTest, storeUop) {
 // Test a STORE instruction is handled correctly when Store queue is full
 TEST_F(RenameUnitTest, storeUopQueueFull) {
   // pre-fill Load Queue
-  for (int i = 0; i < lsqQueueSize; i++) {
+  for (uint64_t i = 0; i < lsqQueueSize; i++) {
     lsq.addStore(uopPtr);
   }
   EXPECT_EQ(lsq.getStoreQueueSpace(), 0);

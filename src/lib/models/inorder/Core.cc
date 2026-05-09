@@ -39,12 +39,13 @@ Core::Core(memory::MemoryInterface& instructionMemory,
   // Query and apply initial state
   auto state = isa.getInitialState();
   applyStateChange(state);
-};
+}
 
 void Core::tick() {
-  ticks_++;
-
   if (hasHalted_) return;
+
+  ticks_++;
+  isa_.updateSystemTimerRegisters(&registerFileSet_, ticks_);
 
   if (exceptionHandler_ != nullptr) {
     processExceptionHandler();
@@ -104,6 +105,7 @@ void Core::tick() {
   }
 
   isa_.updateSystemTimerRegisters(&registerFileSet_, ticks_);
+  fetchUnit_.requestFromPC();
 }
 
 bool Core::hasHalted() const {
@@ -147,23 +149,12 @@ std::map<std::string, std::string> Core::getStats() const {
   std::ostringstream ipcStr;
   ipcStr << std::setprecision(2) << ipc;
 
-  // Sum up the branch stats reported across the execution units.
-  uint64_t totalBranchesExecuted = 0;
-  uint64_t totalBranchMispredicts = 0;
-  totalBranchesExecuted += executeUnit_.getBranchExecutedCount();
-  totalBranchMispredicts += executeUnit_.getBranchMispredictedCount();
-  auto branchMissRate = 100.0f * static_cast<float>(totalBranchMispredicts) /
-                        static_cast<float>(totalBranchesExecuted);
-  std::ostringstream branchMissRateStr;
-  branchMissRateStr << std::setprecision(3) << branchMissRate << "%";
-
-  return {{"cycles", std::to_string(ticks_)},
-          {"retired", std::to_string(retired)},
-          {"ipc", ipcStr.str()},
-          {"flushes", std::to_string(flushes_)},
-          {"branch.executed", std::to_string(totalBranchesExecuted)},
-          {"branch.mispredict", std::to_string(totalBranchMispredicts)},
-          {"branch.missrate", branchMissRateStr.str()}};
+  return {
+      {"cycles", std::to_string(ticks_)},
+      {"retired", std::to_string(retired)},
+      {"ipc", ipcStr.str()},
+      {"flushes", std::to_string(flushes_)},
+  };
 }
 
 void Core::raiseException(const std::shared_ptr<Instruction>& instruction) {

@@ -3,9 +3,9 @@
 #include <vector>
 
 #include "capstone/capstone.h"
-#include "simeng/BranchPredictor.hh"
 #include "simeng/Register.hh"
 #include "simeng/RegisterValue.hh"
+#include "simeng/branchpredictors/BranchPrediction.hh"
 #include "simeng/memory/MemoryInterface.hh"
 #include "simeng/span.hh"
 
@@ -29,7 +29,7 @@ struct ExecutionInfo {
  * Each supported ISA should provide a derived implementation of this class. */
 class Instruction {
  public:
-  virtual ~Instruction(){};
+  virtual ~Instruction() {};
 
   /** Retrieve the source registers this instruction reads. */
   virtual const span<Register> getSourceRegisters() const = 0;
@@ -72,12 +72,6 @@ class Instruction {
 
   /** Retrieve supplied memory data. */
   virtual span<const RegisterValue> getData() const = 0;
-
-  /** Early misprediction check; see if it's possible to determine whether the
-   * next instruction address was mispredicted without executing the
-   * instruction. Returns a {mispredicted, target} tuple representing whether
-   * the instruction was mispredicted, and the correct target address. */
-  virtual std::tuple<bool, uint64_t> checkEarlyBranchMisprediction() const = 0;
 
   /** Retrieve branch type. */
   virtual BranchType getBranchType() const = 0;
@@ -154,9 +148,9 @@ class Instruction {
   bool wasBranchMispredicted() const {
     assert(executed_ &&
            "Branch misprediction check requires instruction to have executed");
-    // Flag as mispredicted if taken state was wrongly predicted, or taken and
-    // predicted target is wrong
-    return (branchTaken_ != prediction_.taken ||
+    // Flag as mispredicted if taken state was wrongly predicted, or taken
+    // and predicted target is wrong
+    return ((branchTaken_ != prediction_.isTaken) ||
             (prediction_.target != branchAddress_));
   }
 
@@ -178,7 +172,7 @@ class Instruction {
    * executing it. */
   uint16_t getStallCycles() const { return stallCycles_; }
 
-  /** Retrieve the number of cycles this instruction will take to be prcoessed
+  /** Retrieve the number of cycles this instruction will take to be processed
    * by the LSQ. */
   uint16_t getLSQLatency() const { return lsqExecutionLatency_; }
 

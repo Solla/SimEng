@@ -14,13 +14,16 @@ Architecture::Architecture(kernel::Linux& kernel, ryml::ConstNodeRef config)
       SVL_(config["Core"]["Streaming-Vector-Length"].as<uint64_t>()),
       vctModulo_((config["Core"]["Clock-Frequency-GHz"].as<float>() * 1e9) /
                  (config["Core"]["Timer-Frequency-MHz"].as<uint32_t>() * 1e6)) {
-  if (cs_open(CS_ARCH_ARM64, CS_MODE_ARM, &capstoneHandle_) != CS_ERR_OK) {
+  if (cs_open(CS_ARCH_AARCH64, CS_MODE_ARM, &capstoneHandle_) != CS_ERR_OK) {
     std::cerr << "[SimEng:Architecture] Could not create capstone handle"
               << std::endl;
     exit(1);
   }
 
   cs_option(capstoneHandle_, CS_OPT_DETAIL, CS_OPT_ON);
+  // This second Capstone option reverses instruction aliases, and instead
+  // means all operand information is that of the "real" underlying instruction.
+  cs_option(capstoneHandle_, CS_OPT_DETAIL, CS_OPT_DETAIL_REAL);
 
   // Generate zero-indexed system register map
   std::vector<uint64_t> sysRegs = config::SimInfo::getSysRegVec();
@@ -31,10 +34,10 @@ Architecture::Architecture(kernel::Linux& kernel, ryml::ConstNodeRef config)
   // Get Virtual Counter Timer and Processor Cycle Counter system registers.
   VCTreg_ = {
       RegisterType::SYSTEM,
-      static_cast<uint16_t>(getSystemRegisterTag(ARM64_SYSREG_CNTVCT_EL0))};
+      static_cast<uint16_t>(getSystemRegisterTag(AARCH64_SYSREG_CNTVCT_EL0))};
   PCCreg_ = {
       RegisterType::SYSTEM,
-      static_cast<uint16_t>(getSystemRegisterTag(ARM64_SYSREG_PMCCNTR_EL0))};
+      static_cast<uint16_t>(getSystemRegisterTag(AARCH64_SYSREG_PMCCNTR_EL0))};
 
   // Instantiate an ExecutionInfo entry for each group in the
   // InstructionGroup namespace.
@@ -65,7 +68,7 @@ Architecture::Architecture(kernel::Linux& kernel, ryml::ConstNodeRef config)
         if (groupInheritance_.find(groups.front()) != groupInheritance_.end()) {
           std::vector<uint16_t> inheritedGroups =
               groupInheritance_.at(groups.front());
-          for (int k = 0; k < inheritedGroups.size(); k++) {
+          for (size_t k = 0; k < inheritedGroups.size(); k++) {
             // Determine if this group has inherited latency values from a
             // smaller distance
             if (inheritanceDistance[inheritedGroups[k]] > distance) {
@@ -111,7 +114,7 @@ Architecture::Architecture(kernel::Linux& kernel, ryml::ConstNodeRef config)
               groupInheritance_.end()) {
             std::vector<uint16_t> inheritedGroups =
                 groupInheritance_.at(groups.front());
-            for (int k = 0; k < inheritedGroups.size(); k++) {
+            for (size_t k = 0; k < inheritedGroups.size(); k++) {
               groupExecutionInfo_[inheritedGroups[k]].ports.push_back(newPort);
               groups.push(inheritedGroups[k]);
             }
@@ -135,7 +138,7 @@ Architecture::Architecture(kernel::Linux& kernel, ryml::ConstNodeRef config)
 
 Architecture::~Architecture() { cs_close(&capstoneHandle_); }
 
-uint8_t Architecture::predecode(const void* ptr, uint16_t bytesAvailable,
+uint8_t Architecture::predecode(const uint8_t* ptr, uint16_t bytesAvailable,
                                 uint64_t instructionAddress,
                                 MacroOp& output) const {
   // Check that instruction address is 4-byte aligned as required by Armv9.2-a
@@ -231,7 +234,7 @@ ProcessStateChange Architecture::getInitialState() const {
   // but is disabled due to bit 4 being set
   changes.modifiedRegisters.push_back(
       {RegisterType::SYSTEM,
-       static_cast<uint16_t>(getSystemRegisterTag(ARM64_SYSREG_DCZID_EL0))});
+       static_cast<uint16_t>(getSystemRegisterTag(AARCH64_SYSREG_DCZID_EL0))});
   changes.modifiedRegisterValues.push_back(static_cast<uint64_t>(0b10100));
 
   return changes;
@@ -280,6 +283,12 @@ uint64_t Architecture::getSVCRval() const { return SVCRval_; }
 void Architecture::setSVCRval(const uint64_t newVal) const {
   SVCRval_ = newVal;
 }
+
+// 0th bit of SVCR register determines if streaming-mode is enabled.
+bool Architecture::isStreamingModeEnabled() const { return SVCRval_ & 1; }
+
+// 1st bit of SVCR register determines if ZA register is enabled.
+bool Architecture::isZARegisterEnabled() const { return SVCRval_ & 2; }
 
 }  // namespace aarch64
 }  // namespace arch

@@ -16,7 +16,7 @@ class AArch64InstructionTest : public testing::Test {
                .as<std::string>()),
         arch(os) {
     // Create InstructionMetadata objects
-    cs_open(CS_ARCH_ARM64, CS_MODE_ARM, &capstoneHandle);
+    cs_open(CS_ARCH_AARCH64, CS_MODE_ARM, &capstoneHandle);
     cs_option(capstoneHandle, CS_OPT_DETAIL, CS_OPT_ON);
 
     // Create instructions which cover the 3 main types: Arithmetic, Memory,
@@ -58,6 +58,18 @@ class AArch64InstructionTest : public testing::Test {
                    &rawInsn_cbz);
     cbzMetadata = std::make_unique<InstructionMetadata>(rawInsn_cbz);
 
+    // psel
+    cs_insn rawInsn_psel;
+    cs_detail rawDetail_psel;
+    rawInsn_psel.detail = &rawDetail_psel;
+    size_t size_psel = 4;
+    uint64_t address_psel = 0;
+    const uint8_t* encoding_psel =
+        reinterpret_cast<const uint8_t*>(pselInstrBytes.data());
+    cs_disasm_iter(capstoneHandle, &encoding_psel, &size_psel, &address_psel,
+                   &rawInsn_psel);
+    pselMetadata = std::make_unique<InstructionMetadata>(rawInsn_psel);
+
     const uint8_t* badEncoding =
         reinterpret_cast<const uint8_t*>(invalidInstrBytes.data());
     invalidMetadata = std::make_unique<InstructionMetadata>(badEncoding);
@@ -74,6 +86,8 @@ class AArch64InstructionTest : public testing::Test {
   std::array<uint8_t, 4> ldpInstrBytes = {0x61, 0x08, 0x40, 0xA9};
   // cbz x2, #0x28
   std::array<uint8_t, 4> cbzInstrBytes = {0x42, 0x01, 0x00, 0xB4};
+  // psel	p4, p0, p2.s[w13, 0]
+  std::array<uint8_t, 4> pselInstrBytes = {0x44, 0x40, 0x31, 0x25};
   std::array<uint8_t, 4> invalidInstrBytes = {0x20, 0x00, 0x02, 0x8c};
 
   // A Capstone decoding library handle, for decoding instructions.
@@ -85,6 +99,7 @@ class AArch64InstructionTest : public testing::Test {
   std::unique_ptr<InstructionMetadata> fdivMetadata;
   std::unique_ptr<InstructionMetadata> ldpMetadata;
   std::unique_ptr<InstructionMetadata> cbzMetadata;
+  std::unique_ptr<InstructionMetadata> pselMetadata;
   std::unique_ptr<InstructionMetadata> invalidMetadata;
   std::unique_ptr<MicroOpInfo> uopInfo;
   InstructionException exception;
@@ -114,7 +129,7 @@ TEST_F(AArch64InstructionTest, validInsn) {
   EXPECT_EQ(insn.getBranchType(), BranchType::Unknown);
   EXPECT_EQ(insn.getData().size(), 0);
   EXPECT_EQ(insn.getDestinationRegisters().size(), destRegs.size());
-  for (int i = 0; i < destRegs.size(); i++) {
+  for (size_t i = 0; i < destRegs.size(); i++) {
     EXPECT_EQ(insn.getDestinationRegisters()[i], destRegs[i]);
   }
   EXPECT_EQ(insn.getException(), InstructionException::None);
@@ -133,7 +148,7 @@ TEST_F(AArch64InstructionTest, validInsn) {
   // Operands vector resized at decode
   EXPECT_EQ(insn.getSourceOperands().size(), 3);
   EXPECT_EQ(insn.getSourceRegisters().size(), srcRegs.size());
-  for (int i = 0; i < srcRegs.size(); i++) {
+  for (size_t i = 0; i < srcRegs.size(); i++) {
     EXPECT_EQ(insn.getSourceRegisters()[i], srcRegs[i]);
     EXPECT_FALSE(insn.isOperandReady(i));
   }
@@ -177,12 +192,12 @@ TEST_F(AArch64InstructionTest, invalidInsn_1) {
   EXPECT_EQ(insn.getBranchType(), BranchType::Unknown);
   EXPECT_EQ(insn.getData().size(), 0);
   EXPECT_EQ(insn.getDestinationRegisters().size(), destRegs.size());
-  for (int i = 0; i < destRegs.size(); i++) {
+  for (size_t i = 0; i < destRegs.size(); i++) {
     EXPECT_EQ(insn.getDestinationRegisters()[i], destRegs[i]);
   }
   EXPECT_EQ(insn.getException(), InstructionException::EncodingUnallocated);
   EXPECT_EQ(insn.getGeneratedAddresses().size(), 0);
-  // Default Group
+  // Default Group for instruction that is not decoded
   EXPECT_EQ(insn.getGroup(), InstructionGroups::INT_SIMPLE_ARTH_NOSHIFT);
   EXPECT_EQ(insn.getInstructionAddress(), 0x44);
   EXPECT_EQ(insn.getInstructionId(), 13);
@@ -197,7 +212,7 @@ TEST_F(AArch64InstructionTest, invalidInsn_1) {
   // Operands vector resized at decode
   EXPECT_EQ(insn.getSourceOperands().size(), 0);
   EXPECT_EQ(insn.getSourceRegisters().size(), srcRegs.size());
-  for (int i = 0; i < srcRegs.size(); i++) {
+  for (size_t i = 0; i < srcRegs.size(); i++) {
     EXPECT_EQ(insn.getSourceRegisters()[i], srcRegs[i]);
     EXPECT_FALSE(insn.isOperandReady(i));
   }
@@ -243,12 +258,12 @@ TEST_F(AArch64InstructionTest, invalidInsn_2) {
   EXPECT_EQ(insn.getBranchType(), BranchType::Unknown);
   EXPECT_EQ(insn.getData().size(), 0);
   EXPECT_EQ(insn.getDestinationRegisters().size(), destRegs.size());
-  for (int i = 0; i < destRegs.size(); i++) {
+  for (size_t i = 0; i < destRegs.size(); i++) {
     EXPECT_EQ(insn.getDestinationRegisters()[i], destRegs[i]);
   }
   EXPECT_EQ(insn.getException(), InstructionException::HypervisorCall);
   EXPECT_EQ(insn.getGeneratedAddresses().size(), 0);
-  // Default Group
+  // Default Group for instruction that is not decoded
   EXPECT_EQ(insn.getGroup(), InstructionGroups::INT_SIMPLE_ARTH_NOSHIFT);
   EXPECT_EQ(insn.getInstructionAddress(), 0x43);
   EXPECT_EQ(insn.getInstructionId(), 15);
@@ -263,7 +278,7 @@ TEST_F(AArch64InstructionTest, invalidInsn_2) {
   // Operands vector resized at decode
   EXPECT_EQ(insn.getSourceOperands().size(), 0);
   EXPECT_EQ(insn.getSourceRegisters().size(), srcRegs.size());
-  for (int i = 0; i < srcRegs.size(); i++) {
+  for (size_t i = 0; i < srcRegs.size(); i++) {
     EXPECT_EQ(insn.getSourceRegisters()[i], srcRegs[i]);
     EXPECT_FALSE(insn.isOperandReady(i));
   }
@@ -297,11 +312,11 @@ TEST_F(AArch64InstructionTest, renameRegs) {
                                    {RegisterType::VECTOR, 0}};
   // Ensure registers decoded correctly
   EXPECT_EQ(insn.getSourceRegisters().size(), srcRegs.size());
-  for (int i = 0; i < srcRegs.size(); i++) {
+  for (size_t i = 0; i < srcRegs.size(); i++) {
     EXPECT_EQ(insn.getSourceRegisters()[i], srcRegs[i]);
   }
   EXPECT_EQ(insn.getDestinationRegisters().size(), destRegs.size());
-  for (int i = 0; i < destRegs.size(); i++) {
+  for (size_t i = 0; i < destRegs.size(); i++) {
     EXPECT_EQ(insn.getDestinationRegisters()[i], destRegs[i]);
   }
 
@@ -314,11 +329,11 @@ TEST_F(AArch64InstructionTest, renameRegs) {
   insn.renameSource(1, srcRegs_new[1]);
   // Ensure renaming functionality works as expected
   EXPECT_EQ(insn.getSourceRegisters().size(), srcRegs_new.size());
-  for (int i = 0; i < srcRegs_new.size(); i++) {
+  for (size_t i = 0; i < srcRegs_new.size(); i++) {
     EXPECT_EQ(insn.getSourceRegisters()[i], srcRegs_new[i]);
   }
   EXPECT_EQ(insn.getDestinationRegisters().size(), destRegs_new.size());
-  for (int i = 0; i < destRegs_new.size(); i++) {
+  for (size_t i = 0; i < destRegs_new.size(); i++) {
     EXPECT_EQ(insn.getDestinationRegisters()[i], destRegs_new[i]);
   }
 }
@@ -386,11 +401,11 @@ TEST_F(AArch64InstructionTest, supplyData) {
 
   // Check source and destination registers extracted correctly
   EXPECT_EQ(insn.getSourceRegisters().size(), srcRegs.size());
-  for (int i = 0; i < srcRegs.size(); i++) {
+  for (size_t i = 0; i < srcRegs.size(); i++) {
     EXPECT_EQ(insn.getSourceRegisters()[i], srcRegs[i]);
   }
   EXPECT_EQ(insn.getDestinationRegisters().size(), destRegs.size());
-  for (int i = 0; i < destRegs.size(); i++) {
+  for (size_t i = 0; i < destRegs.size(); i++) {
     EXPECT_EQ(insn.getDestinationRegisters()[i], destRegs[i]);
   }
 
@@ -405,7 +420,7 @@ TEST_F(AArch64InstructionTest, supplyData) {
   insn.generateAddresses();
   auto generatedAddresses = insn.getGeneratedAddresses();
   EXPECT_EQ(generatedAddresses.size(), 2);
-  for (int i = 0; i < generatedAddresses.size(); i++) {
+  for (size_t i = 0; i < generatedAddresses.size(); i++) {
     EXPECT_EQ(generatedAddresses[i].address, 0x480 + (i * 0x8));
     EXPECT_EQ(generatedAddresses[i].size, 8);
   }
@@ -414,12 +429,12 @@ TEST_F(AArch64InstructionTest, supplyData) {
   EXPECT_FALSE(insn.hasAllData());
   std::vector<RegisterValue> data = {{123, 8}, {456, 8}};
   EXPECT_EQ(generatedAddresses.size(), data.size());
-  for (int i = 0; i < generatedAddresses.size(); i++) {
+  for (size_t i = 0; i < generatedAddresses.size(); i++) {
     insn.supplyData(generatedAddresses[i].address, data[i]);
   }
   // Ensure data was supplied correctly
   auto retrievedData = insn.getData();
-  for (int i = 0; i < retrievedData.size(); i++) {
+  for (size_t i = 0; i < retrievedData.size(); i++) {
     EXPECT_EQ(retrievedData[i], data[i]);
   }
   EXPECT_TRUE(insn.hasAllData());
@@ -449,7 +464,7 @@ TEST_F(AArch64InstructionTest, supplyData_dataAbort) {
   insn.generateAddresses();
   auto generatedAddresses = insn.getGeneratedAddresses();
   EXPECT_EQ(generatedAddresses.size(), 2);
-  for (int i = 0; i < generatedAddresses.size(); i++) {
+  for (size_t i = 0; i < generatedAddresses.size(); i++) {
     EXPECT_EQ(generatedAddresses[i].address, 0x480 + (i * 0x8));
     EXPECT_EQ(generatedAddresses[i].size, 8);
   }
@@ -459,38 +474,6 @@ TEST_F(AArch64InstructionTest, supplyData_dataAbort) {
   insn.supplyData(generatedAddresses[0].address, RegisterValue());
   EXPECT_TRUE(insn.exceptionEncountered());
   EXPECT_EQ(insn.getException(), InstructionException::DataAbort);
-}
-
-// Test to check logic around early branch misprediction logic
-TEST_F(AArch64InstructionTest, earlyBranchMisprediction) {
-  // Insn is `fdivr z1.s, p0/m, z1.s, z0.s`
-  Instruction insn = Instruction(arch, *fdivMetadata.get(), MicroOpInfo());
-  insn.setInstructionAddress(64);
-
-  // Check initial state of an instruction's branch related options
-  BranchPrediction pred = {false, 0};
-  bool matchingPred = (insn.getBranchPrediction() == pred);
-  EXPECT_TRUE(matchingPred);
-  EXPECT_FALSE(insn.wasBranchTaken());
-  EXPECT_EQ(insn.getBranchAddress(), 0);
-  EXPECT_EQ(insn.getBranchType(), BranchType::Unknown);
-  EXPECT_FALSE(insn.isBranch());
-  std::tuple<bool, uint64_t> tup = {false, insn.getInstructionAddress() + 4};
-  EXPECT_EQ(insn.checkEarlyBranchMisprediction(), tup);
-
-  // Set prediction and ensure expected state changes / outcomes are seen
-  pred = {true, 0x4848};
-  insn.setBranchPrediction(pred);
-  matchingPred = (insn.getBranchPrediction() == pred);
-  EXPECT_TRUE(matchingPred);
-  EXPECT_FALSE(insn.wasBranchTaken());
-  EXPECT_EQ(insn.getBranchAddress(), 0);
-  EXPECT_EQ(insn.getBranchType(), BranchType::Unknown);
-  // Check logic of `checkEarlyBranchMisprediction` which is different for
-  // non-branch instructions
-  EXPECT_FALSE(insn.isBranch());
-  tup = {true, insn.getInstructionAddress() + 4};
-  EXPECT_EQ(insn.checkEarlyBranchMisprediction(), tup);
 }
 
 // Test that a correct prediction (branch taken) is handled correctly
@@ -507,8 +490,6 @@ TEST_F(AArch64InstructionTest, correctPred_taken) {
   EXPECT_EQ(insn.getBranchAddress(), 0);
   EXPECT_EQ(insn.getBranchType(), BranchType::Conditional);
   EXPECT_TRUE(insn.isBranch());
-  std::tuple<bool, uint64_t> tup = {false, 0};
-  EXPECT_EQ(insn.checkEarlyBranchMisprediction(), tup);
 
   // Test a correct prediction where branch is taken is handled correctly
   pred = {true, 80 + 0x28};
@@ -536,8 +517,6 @@ TEST_F(AArch64InstructionTest, correctPred_notTaken) {
   EXPECT_EQ(insn.getBranchAddress(), 0);
   EXPECT_EQ(insn.getBranchType(), BranchType::Conditional);
   EXPECT_TRUE(insn.isBranch());
-  std::tuple<bool, uint64_t> tup = {false, 0};
-  EXPECT_EQ(insn.checkEarlyBranchMisprediction(), tup);
 
   // Test a correct prediction where a branch isn't taken is handled correctly
   pred = {false, 80 + 4};
@@ -565,8 +544,6 @@ TEST_F(AArch64InstructionTest, incorrectPred_target) {
   EXPECT_EQ(insn.getBranchAddress(), 0);
   EXPECT_EQ(insn.getBranchType(), BranchType::Conditional);
   EXPECT_TRUE(insn.isBranch());
-  std::tuple<bool, uint64_t> tup = {false, 0};
-  EXPECT_EQ(insn.checkEarlyBranchMisprediction(), tup);
 
   // Test an incorrect prediction is handled correctly - target is wrong
   pred = {true, 80 + 0x28};
@@ -594,8 +571,6 @@ TEST_F(AArch64InstructionTest, incorrectPred_taken) {
   EXPECT_EQ(insn.getBranchAddress(), 0);
   EXPECT_EQ(insn.getBranchType(), BranchType::Conditional);
   EXPECT_TRUE(insn.isBranch());
-  std::tuple<bool, uint64_t> tup = {false, 0};
-  EXPECT_EQ(insn.checkEarlyBranchMisprediction(), tup);
 
   // Test an incorrect prediction is handled correctly - taken is wrong
   pred = {true, 100 + 0x28};
@@ -625,6 +600,39 @@ TEST_F(AArch64InstructionTest, setters) {
   EXPECT_FALSE(insn.isWaitingCommit());
   insn.setWaitingCommit();
   EXPECT_TRUE(insn.isWaitingCommit());
+}
+
+// Test predAsCounterToMasks function.
+TEST_F(AArch64InstructionTest, predAsCounterToMasks_test) {
+  // 1.5 full vectors from start, VL = 128b, uint8_t elem size
+  std::vector<std::array<uint64_t, 4>> ref(2, {0, 0, 0, 0});
+  ref[0][0] =
+      0b0000000000000000000000000000000000000000000000001111111111111111;
+  ref[1][0] =
+      0b0000000000000000000000000000000000000000000000000000000011111111;
+  // invert = 0, num active Elems = 24
+  uint64_t pn =
+      0b0000000000000000000000000000000000000000000000000000000000110001;
+  auto out = predAsCounterToMasks<uint8_t, 2>(pn, 128);
+  EXPECT_EQ(out[0][0], ref[0][0]);
+  EXPECT_EQ(out[1][0], ref[1][0]);
+
+  // 0.5 of last vector, VL = 1024b, uint64_t elem size
+  std::vector<std::array<uint64_t, 4>> ref2(4, {0, 0, 0, 0});
+  ref2[3][1] =
+      0b0000000100000001000000010000000100000001000000010000000100000001;
+  // Invert = 1, num inactive Elems = 56
+  uint64_t pn2 =
+      0b0000000000000000000000000000000000000000000000001000001110001000;
+  auto out2 = predAsCounterToMasks<uint64_t, 4>(pn2, 1024);
+  EXPECT_EQ(out2[0][0], ref2[0][0]);
+  EXPECT_EQ(out2[0][1], ref2[0][1]);
+  EXPECT_EQ(out2[1][0], ref2[1][0]);
+  EXPECT_EQ(out2[1][1], ref2[1][1]);
+  EXPECT_EQ(out2[2][0], ref2[2][0]);
+  EXPECT_EQ(out2[2][1], ref2[2][1]);
+  EXPECT_EQ(out2[3][0], ref2[3][0]);
+  EXPECT_EQ(out2[3][1], ref2[3][1]);
 }
 
 }  // namespace aarch64

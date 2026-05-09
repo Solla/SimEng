@@ -3,10 +3,10 @@
 #include <tuple>
 #include <vector>
 
-#include "simeng/BranchPredictor.hh"
 #include "simeng/Core.hh"
 #include "simeng/Instruction.hh"
 #include "simeng/arch/ProcessStateChange.hh"
+#include "simeng/branchpredictors/BranchPredictor.hh"
 #include "simeng/kernel/Linux.hh"
 #include "simeng/memory/MemoryInterface.hh"
 
@@ -30,7 +30,7 @@ struct ExceptionResult {
  * cycle until complete. */
 class ExceptionHandler {
  public:
-  virtual ~ExceptionHandler(){};
+  virtual ~ExceptionHandler() {};
   /** Tick the exception handler to progress handling of the exception. Should
    * return `false` if the exception requires further handling, or `true` once
    * complete. */
@@ -46,13 +46,13 @@ class Architecture {
  public:
   Architecture(kernel::Linux& kernel) : linux_(kernel) {}
 
-  virtual ~Architecture(){};
+  virtual ~Architecture() {};
 
   /** Attempt to pre-decode from `bytesAvailable` bytes of instruction memory.
    * Writes into the supplied macro-op vector, and returns the number of bytes
    * consumed to produce it; a value of 0 indicates too few bytes were present
    * for a valid decoding. */
-  virtual uint8_t predecode(const void* ptr, uint16_t bytesAvailable,
+  virtual uint8_t predecode(const uint8_t* ptr, uint16_t bytesAvailable,
                             uint64_t instructionAddress,
                             MacroOp& output) const = 0;
 

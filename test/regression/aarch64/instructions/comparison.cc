@@ -3,143 +3,24 @@
 namespace {
 
 using InstComparison = AArch64RegressionTest;
+using namespace simeng::arch::aarch64::InstructionGroups;
 
-// Test correct Value stored after comparison for CASA
-TEST_P(InstComparison, casa) {
-  // 8-bit
-  initialHeapData_.resize(2);
-  uint8_t* heap8 = reinterpret_cast<uint8_t*>(initialHeapData_.data());
-  heap8[0] = 0x12;
-  heap8[1] = 0xDE;
+// Similar to RISC-V atomic instructions, read-modify-write operations i.e. a
+// load, comparison and store, is given the group LOAD_INT only. The instruction
+// object is tagged with the appropriate identifiers (isLoad and isStore) but
+// the group only reflects the first stage of execution. This ensures the
+// instruction goes to the correct part of the pipeline i.e. the LSQ. But we
+// currently do not model the rest of the atomic behaviour precisely as the
+// comparison happens here also. The change of the instructions behaviour over
+// its lifetime is currently not reflected in the group it is given.
 
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xDE
-    mov w2, #100
-    casab w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #1
-    casab w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xDE
-    mov w7, #10
-    stlrb w6, [sp]
-    casab w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(0)), 0x12);
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(3)), 100);
-  EXPECT_EQ(getMemoryValue<uint8_t>(process_->getInitialStackPointer()), 10);
-
-  // 16-bit
-  initialHeapData_.resize(4);
-  uint16_t* heap16 = reinterpret_cast<uint16_t*>(initialHeapData_.data());
-  heap16[0] = 0x1234;
-  heap16[1] = 0xAD;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xAD
-    mov w2, #101
-    casah w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #2
-    casah w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xAD
-    mov w7, #11
-    stlrb w6, [sp]
-    casah w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(0)), 0x1234);
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(3)), 101);
-  EXPECT_EQ(getMemoryValue<uint16_t>(process_->getInitialStackPointer()), 11);
-
-  // 32-bit
-  initialHeapData_.resize(8);
-  uint32_t* heap32 = reinterpret_cast<uint32_t*>(initialHeapData_.data());
-  heap32[0] = 0x12345678;
-  heap32[1] = 0xBE;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xBE
-    mov w2, #102
-    casa w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #4
-    casa w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xBE
-    mov w7, #12
-    stlrb w6, [sp]
-    casa w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(0)),
-            0x12345678);
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(3)), 102);
-  EXPECT_EQ(getMemoryValue<uint32_t>(process_->getInitialStackPointer()), 12);
-
-  // 64-bit
-  initialHeapData_.resize(16);
-  uint64_t* heap64 = reinterpret_cast<uint64_t*>(initialHeapData_.data());
-  heap64[0] = 0x123456789ABCDEF;
-  heap64[1] = 0xEF;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov x1, #0xEF
-    mov x2, #103
-    casa x1, x2, [x0]
-
-    # Values equal
-    add x3, x0, #8
-    casa x1, x2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xEF
-    mov x7, #13
-    stlrb w6, [sp]
-    casa x1, x7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(0)),
-            0x123456789ABCDEF);
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(3)), 103);
-  EXPECT_EQ(getMemoryValue<uint64_t>(process_->getInitialStackPointer()), 13);
-}
-
-// Test correct Value stored after comparison for CASAL
+// Test correct Value stored after comparison for CASAL (32 & 64 bit)
 TEST_P(InstComparison, casal) {
-  // 8-bit
-  initialHeapData_.resize(2);
-  uint8_t* heap8 = reinterpret_cast<uint8_t*>(initialHeapData_.data());
-  heap8[0] = 0x12;
-  heap8[1] = 0xDE;
+  // 32-bit
+  initialHeapData_.resize(16);
+  uint32_t* heap = reinterpret_cast<uint32_t*>(initialHeapData_.data());
+  heap[0] = 0xDEADBEEF;
+  heap[1] = 0xDE;
 
   RUN_AARCH64(R"(
     # Get heap address
@@ -150,68 +31,6 @@ TEST_P(InstComparison, casal) {
     # Values not-equal
     mov w1, #0xDE
     mov w2, #100
-    casalb w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #1
-    casalb w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xDE
-    mov w7, #10
-    stlrb w6, [sp]
-    casalb w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(0)), 0x12);
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(3)), 100);
-  EXPECT_EQ(getMemoryValue<uint8_t>(process_->getInitialStackPointer()), 10);
-
-  // 16-bit
-  initialHeapData_.resize(4);
-  uint16_t* heap16 = reinterpret_cast<uint16_t*>(initialHeapData_.data());
-  heap16[0] = 0x1234;
-  heap16[1] = 0xAD;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xAD
-    mov w2, #101
-    casalh w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #2
-    casalh w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xAD
-    mov w7, #11
-    stlrb w6, [sp]
-    casalh w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(0)), 0x1234);
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(3)), 101);
-  EXPECT_EQ(getMemoryValue<uint16_t>(process_->getInitialStackPointer()), 11);
-
-  // 32-bit
-  initialHeapData_.resize(8);
-  uint32_t* heap32 = reinterpret_cast<uint32_t*>(initialHeapData_.data());
-  heap32[0] = 0x12345678;
-  heap32[1] = 0xBE;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xBE
-    mov w2, #102
     casal w1, w2, [x0]
 
     # Values equal
@@ -219,21 +38,23 @@ TEST_P(InstComparison, casal) {
     casal w1, w2, [x3]
 
     # Using stack pointer
-    mov w6, #0xBE
-    mov w7, #12
+    mov w6, #0xDE
+    mov w7, #89
     stlrb w6, [sp]
     casal w1, w7, [sp]
   )");
   EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(0)),
-            0x12345678);
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(3)), 102);
-  EXPECT_EQ(getMemoryValue<uint32_t>(process_->getInitialStackPointer()), 12);
+            0xDEADBEEF);
+  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(3)), 100);
+  EXPECT_EQ(getMemoryValue<uint32_t>(process_->getInitialStackPointer()), 89);
+
+  EXPECT_GROUP("casal w1, w2, [x0]", LOAD_INT);
 
   // 64-bit
   initialHeapData_.resize(16);
   uint64_t* heap64 = reinterpret_cast<uint64_t*>(initialHeapData_.data());
-  heap64[0] = 0x123456789ABCDEF;
-  heap64[1] = 0xEF;
+  heap64[0] = 0xDEADBEEF;
+  heap64[1] = 0x4F;
 
   RUN_AARCH64(R"(
     # Get heap address
@@ -242,8 +63,8 @@ TEST_P(InstComparison, casal) {
     svc #0
 
     # Values not-equal
-    mov x1, #0xEF
-    mov x2, #103
+    mov x1, #0x4F
+    mov x2, #101
     casal x1, x2, [x0]
 
     # Values equal
@@ -251,273 +72,17 @@ TEST_P(InstComparison, casal) {
     casal x1, x2, [x3]
 
     # Using stack pointer
-    mov w6, #0xEF
-    mov x7, #13
+    mov w6, #0x4F
+    mov x7, #76
     stlrb w6, [sp]
     casal x1, x7, [sp]
   )");
   EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(0)),
-            0x123456789ABCDEF);
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(3)), 103);
-  EXPECT_EQ(getMemoryValue<uint64_t>(process_->getInitialStackPointer()), 13);
-}
+            0xDEADBEEF);
+  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(3)), 101);
+  EXPECT_EQ(getMemoryValue<uint64_t>(process_->getInitialStackPointer()), 76);
 
-// Test correct Value stored after comparison for CAS
-TEST_P(InstComparison, cas) {
-  // 8-bit
-  initialHeapData_.resize(2);
-  uint8_t* heap8 = reinterpret_cast<uint8_t*>(initialHeapData_.data());
-  heap8[0] = 0x12;
-  heap8[1] = 0xDE;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xDE
-    mov w2, #100
-    casb w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #1
-    casb w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xDE
-    mov w7, #10
-    stlrb w6, [sp]
-    casb w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(0)), 0x12);
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(3)), 100);
-  EXPECT_EQ(getMemoryValue<uint8_t>(process_->getInitialStackPointer()), 10);
-
-  // 16-bit
-  initialHeapData_.resize(4);
-  uint16_t* heap16 = reinterpret_cast<uint16_t*>(initialHeapData_.data());
-  heap16[0] = 0x1234;
-  heap16[1] = 0xAD;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xAD
-    mov w2, #101
-    cash w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #2
-    cash w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xAD
-    mov w7, #11
-    stlrb w6, [sp]
-    cash w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(0)), 0x1234);
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(3)), 101);
-  EXPECT_EQ(getMemoryValue<uint16_t>(process_->getInitialStackPointer()), 11);
-
-  // 32-bit
-  initialHeapData_.resize(8);
-  uint32_t* heap32 = reinterpret_cast<uint32_t*>(initialHeapData_.data());
-  heap32[0] = 0x12345678;
-  heap32[1] = 0xBE;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xBE
-    mov w2, #102
-    cas w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #4
-    cas w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xBE
-    mov w7, #12
-    stlrb w6, [sp]
-    cas w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(0)),
-            0x12345678);
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(3)), 102);
-  EXPECT_EQ(getMemoryValue<uint32_t>(process_->getInitialStackPointer()), 12);
-
-  // 64-bit
-  initialHeapData_.resize(16);
-  uint64_t* heap64 = reinterpret_cast<uint64_t*>(initialHeapData_.data());
-  heap64[0] = 0x123456789ABCDEF;
-  heap64[1] = 0xEF;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov x1, #0xEF
-    mov x2, #103
-    cas x1, x2, [x0]
-
-    # Values equal
-    add x3, x0, #8
-    cas x1, x2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xEF
-    mov x7, #13
-    stlrb w6, [sp]
-    cas x1, x7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(0)),
-            0x123456789ABCDEF);
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(3)), 103);
-  EXPECT_EQ(getMemoryValue<uint64_t>(process_->getInitialStackPointer()), 13);
-}
-
-// Test correct Value stored after comparison for CASL
-TEST_P(InstComparison, casl) {
-  // 8-bit
-  initialHeapData_.resize(2);
-  uint8_t* heap8 = reinterpret_cast<uint8_t*>(initialHeapData_.data());
-  heap8[0] = 0x12;
-  heap8[1] = 0xDE;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xDE
-    mov w2, #100
-    caslb w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #1
-    caslb w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xDE
-    mov w7, #10
-    stlrb w6, [sp]
-    caslb w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(0)), 0x12);
-  EXPECT_EQ(getMemoryValue<uint8_t>(getGeneralRegister<uint64_t>(3)), 100);
-  EXPECT_EQ(getMemoryValue<uint8_t>(process_->getInitialStackPointer()), 10);
-
-  // 16-bit
-  initialHeapData_.resize(4);
-  uint16_t* heap16 = reinterpret_cast<uint16_t*>(initialHeapData_.data());
-  heap16[0] = 0x1234;
-  heap16[1] = 0xAD;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xAD
-    mov w2, #101
-    caslh w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #2
-    caslh w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xAD
-    mov w7, #11
-    stlrb w6, [sp]
-    caslh w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(0)), 0x1234);
-  EXPECT_EQ(getMemoryValue<uint16_t>(getGeneralRegister<uint64_t>(3)), 101);
-  EXPECT_EQ(getMemoryValue<uint16_t>(process_->getInitialStackPointer()), 11);
-
-  // 32-bit
-  initialHeapData_.resize(8);
-  uint32_t* heap32 = reinterpret_cast<uint32_t*>(initialHeapData_.data());
-  heap32[0] = 0x12345678;
-  heap32[1] = 0xBE;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov w1, #0xBE
-    mov w2, #102
-    casl w1, w2, [x0]
-
-    # Values equal
-    add x3, x0, #4
-    casl w1, w2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xBE
-    mov w7, #12
-    stlrb w6, [sp]
-    casl w1, w7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(0)),
-            0x12345678);
-  EXPECT_EQ(getMemoryValue<uint32_t>(getGeneralRegister<uint64_t>(3)), 102);
-  EXPECT_EQ(getMemoryValue<uint32_t>(process_->getInitialStackPointer()), 12);
-
-  // 64-bit
-  initialHeapData_.resize(16);
-  uint64_t* heap64 = reinterpret_cast<uint64_t*>(initialHeapData_.data());
-  heap64[0] = 0x123456789ABCDEF;
-  heap64[1] = 0xEF;
-
-  RUN_AARCH64(R"(
-    # Get heap address
-    mov x0, 0
-    mov x8, 214
-    svc #0
-
-    # Values not-equal
-    mov x1, #0xEF
-    mov x2, #103
-    casl x1, x2, [x0]
-
-    # Values equal
-    add x3, x0, #8
-    casl x1, x2, [x3]
-
-    # Using stack pointer
-    mov w6, #0xEF
-    mov x7, #13
-    stlrb w6, [sp]
-    casl x1, x7, [sp]
-  )");
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(0)),
-            0x123456789ABCDEF);
-  EXPECT_EQ(getMemoryValue<uint64_t>(getGeneralRegister<uint64_t>(3)), 103);
-  EXPECT_EQ(getMemoryValue<uint64_t>(process_->getInitialStackPointer()), 13);
+  EXPECT_GROUP("casal x1, x7, [sp]", LOAD_INT);
 }
 
 // Test that NZCV flags are set correctly by the 32-bit cmn instruction
@@ -543,6 +108,8 @@ TEST_P(InstComparison, cmnw) {
     cmn w0, #0x1
   )");
   EXPECT_EQ(getNZCV(), 0b0110);
+
+  EXPECT_GROUP(R"(cmn w0, #0x1)", INT_SIMPLE_CMP);
 }
 
 // Test that NZCV flags are set correctly by the 64-bit cmn instruction
@@ -568,6 +135,8 @@ TEST_P(InstComparison, cmnx) {
     cmn x0, #0x1
   )");
   EXPECT_EQ(getNZCV(), 0b0110);
+
+  EXPECT_GROUP(R"(cmn X0, #0x1)", INT_SIMPLE_CMP);
 }
 
 // Test that NZCV flags are set correctly by the 32-bit ccmn instruction
@@ -639,6 +208,9 @@ TEST_P(InstComparison, tstw) {
     tst w0, #0x80000000
   )");
   EXPECT_EQ(getNZCV(), 0b1000);
+
+  EXPECT_GROUP(R"(tst w0, w2)", INT_SIMPLE_LOGICAL_NOSHIFT);
+  EXPECT_GROUP(R"(tst w0, #0x80000000)", INT_SIMPLE_LOGICAL_NOSHIFT);
 }
 
 // Test that NZCV flags are set correctly by 32-bit cmp
@@ -692,6 +264,8 @@ TEST_P(InstComparison, cmpw) {
     cmp w1, #1
   )");
   EXPECT_EQ(getNZCV(), 0b0011);
+
+  EXPECT_GROUP(R"(cmp w1, #1)", INT_SIMPLE_CMP);
 }
 
 // Test that NZCV flags are set correctly by 64-bit cmp
@@ -772,6 +346,8 @@ TEST_P(InstComparison, cmpx) {
     cmp x0, x2, uxtx 4
   )");
   EXPECT_EQ(getNZCV(), 0b0010);
+
+  EXPECT_GROUP(R"(cmp x0, x2, uxtx 4)", INT_SIMPLE_CMP);
 }
 
 // Test that NZCV flags are set correctly by 64-bit tst
@@ -796,6 +372,9 @@ TEST_P(InstComparison, tstx) {
     tst x0, #0x8000000000000000
   )");
   EXPECT_EQ(getNZCV(), 0b1000);
+
+  EXPECT_GROUP(R"(tst x0, x2)", INT_SIMPLE_LOGICAL_NOSHIFT);
+  EXPECT_GROUP(R"(tst x0, #0b0010)", INT_SIMPLE_LOGICAL_NOSHIFT);
 }
 
 INSTANTIATE_TEST_SUITE_P(AArch64, InstComparison,

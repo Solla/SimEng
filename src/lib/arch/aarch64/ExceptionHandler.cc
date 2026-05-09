@@ -154,14 +154,10 @@ bool ExceptionHandler::init() {
             return concludeSyscall(stateChange);
           }
 
-          int64_t bytesRemaining = totalRead;
           // Get pointer and size of the buffer
           uint64_t iDst = bufPtr;
-          uint64_t iLength = bytesRemaining;
-          if (iLength > bytesRemaining) {
-            iLength = bytesRemaining;
-          }
-          bytesRemaining -= iLength;
+          // totalRead not negative due to above check so cast is safe
+          uint64_t iLength = static_cast<uint64_t>(totalRead);
 
           // Write data for this buffer in 128-byte chunks
           auto iSrc = reinterpret_cast<const char*>(dataBuffer_.data());
@@ -231,7 +227,8 @@ bool ExceptionHandler::init() {
           }
 
           // Build list of memory write operations
-          int64_t bytesRemaining = totalRead;
+          // totalRead not negative due to above check so cast is safe
+          uint64_t bytesRemaining = static_cast<uint64_t>(totalRead);
           for (int64_t i = 0; i < iovcnt; i++) {
             // Get pointer and size of the buffer
             uint64_t iDst = iovdata[i * 2 + 0];
@@ -329,20 +326,21 @@ bool ExceptionHandler::init() {
         int64_t flag = registerFileSet.get(R3).get<int64_t>();
 
         char* filename = new char[kernel::Linux::LINUX_PATH_MAX];
-        return readStringThen(
-            filename, filenamePtr, kernel::Linux::LINUX_PATH_MAX,
-            [=](auto length) {
-              // Invoke the kernel
-              kernel::stat statOut;
-              uint64_t retval = linux_.newfstatat(dfd, filename, statOut, flag);
-              ProcessStateChange stateChange = {
-                  ChangeType::REPLACEMENT, {R0}, {retval}};
-              delete[] filename;
-              stateChange.memoryAddresses.push_back(
-                  {statbufPtr, sizeof(statOut)});
-              stateChange.memoryAddressValues.push_back(statOut);
-              return concludeSyscall(stateChange);
-            });
+        return readStringThen(filename, filenamePtr,
+                              kernel::Linux::LINUX_PATH_MAX, [=](auto length) {
+                                // Invoke the kernel
+                                kernel::stat statOut;
+                                uint64_t retval = linux_.newfstatat(
+                                    dfd, filename, statOut, flag);
+                                ProcessStateChange stateChange = {
+                                    ChangeType::REPLACEMENT, {R0}, {retval}};
+                                delete[] filename;
+                                stateChange.memoryAddresses.push_back(
+                                    {statbufPtr, sizeof(statOut)});
+                                stateChange.memoryAddressValues.push_back(
+                                    {statOut, sizeof(statOut)});
+                                return concludeSyscall(stateChange);
+                              });
 
         break;
       }
@@ -633,20 +631,20 @@ bool ExceptionHandler::init() {
         uint64_t bufPtr = registerFileSet.get(R0).get<uint64_t>();
         size_t buflen = registerFileSet.get(R1).get<size_t>();
 
-        char buf[buflen];
+        std::vector<char> buf;
         for (size_t i = 0; i < buflen; i++) {
-          buf[i] = (uint8_t)rand();
+          buf.push_back((uint8_t)rand());
         }
 
         stateChange = {ChangeType::REPLACEMENT, {R0}, {(uint64_t)buflen}};
 
         stateChange.memoryAddresses.push_back({bufPtr, (uint8_t)buflen});
-        stateChange.memoryAddressValues.push_back(RegisterValue(buf, buflen));
+        stateChange.memoryAddressValues.push_back(
+            RegisterValue(buf.data(), buflen));
 
         break;
       }
-      case 293:  // rseq
-      {
+      case 293: {  // rseq
         stateChange = {ChangeType::REPLACEMENT, {R0}, {0ull}};
         break;
       }
@@ -677,8 +675,17 @@ bool ExceptionHandler::init() {
     if (metadata.opcode == Opcode::AArch64_MSR) {
       newSVCR = instruction_.getSourceOperands()[0].get<uint64_t>();
     } else if (metadata.opcode == Opcode::AArch64_MSRpstatesvcrImm1) {
+      // Ensure operand metadata is as expected
+      assert(metadata.operands[0].type == AARCH64_OP_SYSALIAS);
+      assert(metadata.operands[0].sysop.sub_type == AARCH64_OP_SVCR);
+      // extract SVCR bits
       const uint64_t svcrBits =
-          static_cast<uint64_t>(metadata.operands[0].svcr);
+          static_cast<uint64_t>(metadata.operands[0].sysop.alias.svcr);
+      // Ensure SVCR Bits are valid
+      assert(svcrBits == AARCH64_SVCR_SVCRSM ||
+             svcrBits == AARCH64_SVCR_SVCRZA ||
+             svcrBits == AARCH64_SVCR_SVCRSMZA);
+
       const uint64_t imm = metadata.operands[1].imm;
       assert((imm == 0 || imm == 1) &&
              "[SimEng:ExceptionHandler] SVCR Instruction invalid - Imm value "
@@ -699,20 +706,22 @@ bool ExceptionHandler::init() {
     std::vector<Register> regs;
     std::vector<RegisterValue> regValues;
 
-    // If SVCR.ZA has changed state then zero out ZA register, else don't
+    // If SVCR.ZA has changed state then zero out ZA and ZT0 registers
     if (exception != InstructionException::StreamingModeUpdate) {
-      if ((newSVCR & ARM64_SVCR_SVCRZA) != (currSVCR & ARM64_SVCR_SVCRZA)) {
+      if ((newSVCR & AARCH64_SVCR_SVCRZA) != (currSVCR & AARCH64_SVCR_SVCRZA)) {
         for (uint16_t i = 0; i < regFileStruct[RegisterType::MATRIX].quantity;
              i++) {
           regs.push_back({RegisterType::MATRIX, i});
           regValues.push_back(RegisterValue(0, 256));
         }
+        regs.push_back({RegisterType::TABLE, 0});
+        regValues.push_back(RegisterValue(0, 64));
       }
     }
     // If SVCR.SM has changed state then zero out SVE, NEON, Predicate
     // registers, else don't
     if (exception != InstructionException::ZAregisterStatusUpdate) {
-      if ((newSVCR & ARM64_SVCR_SVCRSM) != (currSVCR & ARM64_SVCR_SVCRSM)) {
+      if ((newSVCR & AARCH64_SVCR_SVCRSM) != (currSVCR & AARCH64_SVCR_SVCRSM)) {
         for (uint16_t i = 0; i < regFileStruct[RegisterType::VECTOR].quantity;
              i++) {
           regs.push_back({RegisterType::VECTOR, i});
@@ -726,9 +735,9 @@ bool ExceptionHandler::init() {
     }
 
     // Update SVCR system register in regFile
-    regs.push_back(
-        {RegisterType::SYSTEM,
-         static_cast<uint16_t>(arch.getSystemRegisterTag(ARM64_SYSREG_SVCR))});
+    regs.push_back({RegisterType::SYSTEM,
+                    static_cast<uint16_t>(
+                        arch.getSystemRegisterTag(AARCH64_SYSREG_SVCR))});
     regValues.push_back(RegisterValue(newSVCR, 8));
 
     ProcessStateChange stateChange = {ChangeType::REPLACEMENT, regs, regValues};
@@ -826,7 +835,7 @@ void ExceptionHandler::readLinkAt(span<char> path) {
   for (size_t i = 0; i < bytesCopied; i += 256) {
     uint8_t size = std::min<uint64_t>(bytesCopied - i, 256ul);
     stateChange.memoryAddresses.push_back({bufAddress + i, size});
-    stateChange.memoryAddressValues.push_back(RegisterValue(bufPtr, size));
+    stateChange.memoryAddressValues.push_back(RegisterValue(bufPtr + i, size));
   }
 
   concludeSyscall(stateChange);
@@ -896,9 +905,6 @@ void ExceptionHandler::printException(const Instruction& insn) const {
     case InstructionException::ExecutionNotYetImplemented:
       std::cout << "execution not-yet-implemented";
       break;
-    case InstructionException::AliasNotYetImplemented:
-      std::cout << "alias not-yet-implemented";
-      break;
     case InstructionException::MisalignedPC:
       std::cout << "misaligned program counter";
       break;
@@ -961,6 +967,12 @@ void ExceptionHandler::printException(const Instruction& insn) const {
   std::cout << std::endl;
   std::cout << "[SimEng:ExceptionHandler]       opcode ID: " << metadata.opcode
             << std::endl;
+
+  std::string extraInformation = metadata.getExceptionString();
+  if (!extraInformation.empty()) {
+    std::cout << "[SimEng:ExceptionHandler]     Extra information: "
+              << extraInformation << std::endl;
+  }
 }
 
 bool ExceptionHandler::fatal() {

@@ -30,9 +30,9 @@ DispatchIssueUnit::DispatchIssueUnit(
     auto reservation_station = config["Reservation-Stations"][i];
     // Create ReservationStation struct to be stored
     ReservationStation rs = {
-        reservation_station["Size"].as<uint16_t>(),
+        reservation_station["Size"].as<uint32_t>(),
         reservation_station["Dispatch-Rate"].as<uint16_t>(),
-        0,
+        0ul,
         {}};
     // Resize rs port attribute to match what's defined in config file
     rs.ports.resize(reservation_station["Port-Nums"].num_children());
@@ -42,7 +42,7 @@ DispatchIssueUnit::DispatchIssueUnit(
       uint16_t issue_port = reservation_station["Port-Nums"][j].as<uint16_t>();
       rs.ports[j].issuePort = issue_port;
       // Add port mapping entry, resizing vector if needed
-      if ((issue_port + 1) > portMapping_.size()) {
+      if ((size_t)(issue_port + 1) > portMapping_.size()) {
         portMapping_.resize((issue_port + 1));
       }
       portMapping_[issue_port] = {i, j};
@@ -67,30 +67,41 @@ void DispatchIssueUnit::tick() {
       continue;
     }
 
-    const std::vector<uint16_t>& supportedPorts = uop->getSupportedPorts();
+    std::vector<uint16_t> supportedPorts = uop->getSupportedPorts();
     if (uop->exceptionEncountered()) {
       // Exception; mark as ready to commit, and remove from pipeline
       uop->setCommitReady();
       input_.getHeadSlots()[slot] = nullptr;
       continue;
     }
-    // Allocate issue port to uop
+
+    // Loop through all ports and remove any who's RS is at capacity or dispatch
+    // rate has been met
+    auto portIt = supportedPorts.begin();
+    while (portIt != supportedPorts.end()) {
+      uint16_t RS_Index = portMapping_[*portIt].first;
+      ReservationStation* rs = &reservationStations_[RS_Index];
+      if (rs->currentSize == rs->capacity ||
+          dispatches_[RS_Index] == rs->dispatchRate) {
+        portIt = supportedPorts.erase(portIt);
+      } else {
+        portIt++;
+      }
+    }
+    // If no ports left, stall and return
+    if (supportedPorts.size() == 0) {
+      input_.stall(true);
+      rsStalls_++;
+      return;
+    }
+
+    // Find an available RS
     uint16_t port = portAllocator_.allocate(supportedPorts);
     uint16_t RS_Index = portMapping_[port].first;
     uint16_t RS_Port = portMapping_[port].second;
     assert(RS_Index < reservationStations_.size() &&
            "Allocated port inaccessible");
-    ReservationStation& rs = reservationStations_[RS_Index];
-
-    // When appropriate, stall uop or input buffer if stall buffer full
-    if (rs.currentSize == rs.capacity ||
-        dispatches_[RS_Index] == rs.dispatchRate) {
-      // Deallocate port given
-      portAllocator_.deallocate(port);
-      input_.stall(true);
-      rsStalls_++;
-      return;
-    }
+    ReservationStation* rs = &reservationStations_[RS_Index];
 
     // Assume the uop will be ready
     bool ready = true;
@@ -123,10 +134,10 @@ void DispatchIssueUnit::tick() {
 
     // Increment dispatches made and RS occupied entries size
     dispatches_[RS_Index]++;
-    rs.currentSize++;
+    rs->currentSize++;
 
     if (ready) {
-      rs.ports[RS_Port].ready.push_back(std::move(uop));
+      rs->ports[RS_Port].ready.push_back(std::move(uop));
     }
 
     input_.getHeadSlots()[slot] = nullptr;
@@ -257,7 +268,7 @@ uint64_t DispatchIssueUnit::getPortBusyStalls() const {
   return portBusyStalls_;
 }
 
-void DispatchIssueUnit::getRSSizes(std::vector<uint64_t>& sizes) const {
+void DispatchIssueUnit::getRSSizes(std::vector<uint32_t>& sizes) const {
   for (auto& rs : reservationStations_) {
     sizes.push_back(rs.capacity - rs.currentSize);
   }

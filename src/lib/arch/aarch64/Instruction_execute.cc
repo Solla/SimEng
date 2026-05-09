@@ -67,9 +67,9 @@ void Instruction::execute() {
       canExecute() &&
       "Attempted to execute an instruction before all operands were provided");
   // 0th bit of SVCR register determines if streaming-mode is enabled.
-  const bool SMenabled = architecture_.getSVCRval() & 1;
+  const bool SMenabled = architecture_.isStreamingModeEnabled();
   // 1st bit of SVCR register determines if ZA register is enabled.
-  const bool ZAenabled = architecture_.getSVCRval() & 2;
+  const bool ZAenabled = architecture_.isZARegisterEnabled();
   // When streaming mode is enabled, the architectural vector length goes from
   // SVE's VL to SME's SVL.
   const uint16_t VL_bits = SMenabled ? architecture_.getStreamingVectorLength()
@@ -108,8 +108,151 @@ void Instruction::execute() {
     }
   } else {
     switch (metadata_.opcode) {
+      case Opcode::AArch64_ADDHA_MPPZ_D: {  // addha zada.d, pn/m, pm/m, zn.d
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint64_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint64_t>();
+
+        for (uint16_t row = 0; row < rowCount; row++) {
+          const uint64_t* zaRow = sourceValues_[row].getAsVector<uint64_t>();
+          uint64_t out[32] = {0};
+          std::memcpy(out, zaRow, rowCount * sizeof(uint64_t));
+          // Slice element is active IFF all of the following conditions hold:
+          //  - Element in 1st source pred corresponding to horizontal
+          //    slice is TRUE
+          //  - Corresponding element in 2nd source pred is TRUE
+          const uint64_t shifted_active_pn = 1ull << ((row % 8) * 8);
+          if (pn[row / 8] & shifted_active_pn) {
+            for (uint16_t elem = 0; elem < rowCount; elem++) {
+              const uint64_t shifted_active_pm = 1ull << ((elem % 8) * 8);
+              if (pm[elem / 8] & shifted_active_pm) {
+                out[elem] = zn[elem];
+              }
+            }
+          }
+          results_[row] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_ADDHA_MPPZ_S: {  // addha zada.s, pn/m, pm/m, zn.s
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint32_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint32_t>();
+
+        for (uint16_t row = 0; row < rowCount; row++) {
+          const uint32_t* zaRow = sourceValues_[row].getAsVector<uint32_t>();
+          uint32_t out[64] = {0};
+          std::memcpy(out, zaRow, rowCount * sizeof(uint32_t));
+          // Slice element is active IFF all of the following conditions hold:
+          //  - Element in 1st source pred corresponding to horizontal
+          //    slice is TRUE
+          //  - Corresponding element in 2nd source pred is TRUE
+          const uint64_t shifted_active_pn = 1ull << ((row % 16) * 4);
+          if (pn[row / 16] & shifted_active_pn) {
+            for (uint16_t elem = 0; elem < rowCount; elem++) {
+              const uint64_t shifted_active_pm = 1ull << ((elem % 16) * 4);
+              if (pm[elem / 16] & shifted_active_pm) {
+                out[elem] = zn[elem];
+              }
+            }
+          }
+          results_[row] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_ADDVA_MPPZ_D: {  // addva zada.d, pn/m, pm/m, zn.d
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint64_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint64_t>();
+
+        for (uint16_t row = 0; row < rowCount; row++) {
+          const uint64_t* zaRow = sourceValues_[row].getAsVector<uint64_t>();
+          uint64_t out[32] = {0};
+          std::memcpy(out, zaRow, rowCount * sizeof(uint64_t));
+          // Slice element is active IFF all of the following conditions hold:
+          //  - Corresponding element in 1st source pred is TRUE
+          //  - Element in 2nd source pred corresponding to vertical
+          //    slice is TRUE
+          const uint64_t shifted_active_pn = 1ull << ((row % 8) * 8);
+          if (pn[row / 8] & shifted_active_pn) {
+            // Corresponding slice element is active (i.e. all elements in row).
+            // Now check if each vertical slice (i.e. each row element) is
+            // active
+            for (uint16_t elem = 0; elem < rowCount; elem++) {
+              const uint64_t shifted_active_pm = 1ull << ((elem % 8) * 8);
+              if (pm[elem / 8] & shifted_active_pm) {
+                out[elem] = zn[row];
+              }
+            }
+          }
+          results_[row] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_ADDVA_MPPZ_S: {  // addva zada.s, pn/m, pm/m, zn.s
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint32_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint32_t>();
+
+        for (uint16_t row = 0; row < rowCount; row++) {
+          const uint32_t* zaRow = sourceValues_[row].getAsVector<uint32_t>();
+          uint32_t out[64] = {0};
+          std::memcpy(out, zaRow, rowCount * sizeof(uint32_t));
+          // Slice element is active IFF all of the following conditions hold:
+          //  - Corresponding element in 1st source pred is TRUE
+          //  - Element in 2nd source pred corresponding to vertical
+          //    slice is TRUE
+          const uint64_t shifted_active_pn = 1ull << ((row % 16) * 4);
+          if (pn[row / 16] & shifted_active_pn) {
+            // Corresponding slice element is active (i.e. all elements in row).
+            // Now check if each vertical slice (i.e. each row element) is
+            // active in 2nd pred
+            for (uint16_t elem = 0; elem < rowCount; elem++) {
+              const uint64_t shifted_active_pm = 1ull << ((elem % 16) * 4);
+              if (pm[elem / 16] & shifted_active_pm) {
+                out[elem] = zn[row];
+              }
+            }
+          }
+          results_[row] = {out, 256};
+        }
+        break;
+      }
       case Opcode::AArch64_ADCXr: {  // adc xd, xn, xm
         auto [result, nzcv] = addCarry_3ops<uint64_t>(sourceValues_);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -207,30 +350,35 @@ void Instruction::execute() {
       case Opcode::AArch64_ADDWri: {  // add wd, wn, #imm{, shift}
         auto [result, nzcv] =
             addShift_imm<uint32_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_ADDWrs: {  // add wd, wn, wm{, shift #amount}
         auto [result, nzcv] =
             addShift_3ops<uint32_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_ADDWrx: {  // add wd, wn, wm{, extend #amount}
         auto [result, nzcv] =
             addExtend_3ops<uint32_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_ADDXri: {  // add xd, xn, #imm{, shift}
         auto [result, nzcv] =
             addShift_imm<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
       case Opcode::AArch64_ADDXrs: {  // add xd, xn, xm, {shift #amount}
         auto [result, nzcv] =
             addShift_3ops<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -238,6 +386,7 @@ void Instruction::execute() {
       case Opcode::AArch64_ADDXrx64: {  // add xd, xn, xm{, extend {#amount}}
         auto [result, nzcv] =
             addExtend_3ops<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -321,6 +470,40 @@ void Instruction::execute() {
         results_[0] = vecAdd_3ops<uint8_t, 8>(sourceValues_);
         break;
       }
+      case Opcode::AArch64_ADD_VG2_M2Z_S: {  // add za.s[wv, off, vgx2], {zn1.s,
+                                             // zn2.s}
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+
+        // Get ZA stride between halves and index into each ZA half
+        const uint16_t zaStride = zaRowCount / 2;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+
+        // Pre-set all ZA result rows as only 2 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        for (int r = 0; r < 2; r++) {
+          const uint32_t* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<uint32_t>();
+          const uint32_t* znr =
+              sourceValues_[zaRowCount + 1 + r].getAsVector<uint32_t>();
+          uint32_t out[64] = {0};
+          for (int i = 0; i < elemCount; i++) {
+            out[i] = zaRow[i] + znr[i];
+          }
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
       case Opcode::AArch64_ADR: {  // adr xd, #imm
         results_[0] = instructionAddress_ + metadata_.operands[1].imm;
         break;
@@ -384,6 +567,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOp_imm<uint32_t>(
             sourceValues_, metadata_, false,
             [](uint32_t x, uint32_t y) -> uint32_t { return x & y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -391,6 +575,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOpShift_3ops<uint32_t>(
             sourceValues_, metadata_, false,
             [](uint32_t x, uint32_t y) -> uint32_t { return x & y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -398,6 +583,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOp_imm<uint64_t>(
             sourceValues_, metadata_, false,
             [](uint64_t x, uint64_t y) -> uint64_t { return x & y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -405,6 +591,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOpShift_3ops<uint64_t>(
             sourceValues_, metadata_, false,
             [](uint64_t x, uint64_t y) -> uint64_t { return x & y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -479,6 +666,66 @@ void Instruction::execute() {
         branchAddress_ = instructionAddress_ + metadata_.operands[0].imm;
         break;
       }
+#if SIMENG_ENABLE_BF16 == 1
+      case Opcode::AArch64_BF16DOTlanev8bf16: {  // bfdot vd.4s, vn.8h,
+                                                 // vm.2h[index]
+        // BF16 -- EXPERIMENTAL
+        // Must be enabled at SimEng compile time
+        // Not verified to be working for all compilers or OSs.
+        // No Tests written
+
+        const float* vd = sourceValues_[0].getAsVector<float>();
+        const __bf16* vn = sourceValues_[1].getAsVector<__bf16>();
+        const __bf16* vm = sourceValues_[2].getAsVector<__bf16>();
+        const int vmIndex = metadata_.operands[2].vector_index;
+
+        float out[4] = {vd[0], vd[1], vd[2], vd[3]};
+        for (int i = 0; i < 4; i++) {
+          out[i] += (static_cast<float>(vn[2 * i]) *
+                     static_cast<float>(vm[2 * vmIndex])) +
+                    (static_cast<float>(vn[2 * i + 1]) *
+                     static_cast<float>(vm[2 * vmIndex + 1]));
+        }
+        results_[0] = RegisterValue(out, 256);
+        break;
+      }
+      case Opcode::AArch64_BFDOT_ZZI: {  // bfdot zd.s, zn.h, zm.h[index]
+        // BF16 -- EXPERIMENTAL
+        // Must be enabled at SimEng compile time
+        // Not verified to be working for all compilers or OSs.
+        // No Tests written
+
+        const uint16_t partition_num = VL_bits / 16;
+
+        const float* zd = sourceValues_[0].getAsVector<float>();
+        // Extract data as uint16_t so that bytes-per-element is correct
+        const uint16_t* zn = sourceValues_[1].getAsVector<uint16_t>();
+        const uint16_t* zm = sourceValues_[2].getAsVector<uint16_t>();
+        const int index = metadata_.operands[2].vector_index;
+
+        float out[64] = {0.0f};
+        for (int i = 0; i < partition_num; i++) {
+          // MOD 4 as 4 32-bit elements in each 128-bit segment
+          const int zmBase = i - (i % 4);
+          const int zmIndex = zmBase + index;
+
+          float zn1, zn2, zm1, zm2;
+          // Horrible hack in order to convert bf16 (currently stored in a
+          // uint16_t) into a float.
+          // Each bf16 is copied into the most significant 16-bits of each
+          // float variable; given IEEE FP32 and BF16 have the same width
+          // exponent and one sign bit.
+          memcpy((uint16_t*)&zn1 + 1, &zn[2 * i], 2);
+          memcpy((uint16_t*)&zn2 + 1, &zn[2 * i + 1], 2);
+          memcpy((uint16_t*)&zm1 + 1, &zm[2 * zmIndex], 2);
+          memcpy((uint16_t*)&zm2 + 1, &zm[2 * zmIndex + 1], 2);
+
+          out[i] = zd[i] + ((zn1 * zm1) + (zn2 * zm2));
+        }
+        results_[0] = RegisterValue(out, 256);
+        break;
+      }
+#endif
       case Opcode::AArch64_BFMWri: {  // bfm wd, wn, #immr, #imms
         results_[0] = {
             bfm_2imms<uint32_t>(sourceValues_, metadata_, false, false), 8};
@@ -506,12 +753,14 @@ void Instruction::execute() {
       case Opcode::AArch64_BICWrs: {  // bic wd, wn, wm{, shift #amount}
         auto [result, nzcv] =
             bicShift_3ops<uint32_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_BICXrs: {  // bic xd, xn, xm{, shift #amount}
         auto [result, nzcv] =
             bicShift_3ops<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -1262,6 +1511,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOp_imm<uint32_t>(
             sourceValues_, metadata_, false,
             [](uint32_t x, uint32_t y) -> uint32_t { return x ^ y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -1269,6 +1519,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOpShift_3ops<uint32_t>(
             sourceValues_, metadata_, false,
             [](uint32_t x, uint32_t y) -> uint32_t { return x ^ y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -1276,6 +1527,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOp_imm<uint64_t>(
             sourceValues_, metadata_, false,
             [](uint64_t x, uint64_t y) -> uint64_t { return x ^ y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -1283,6 +1535,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOpShift_3ops<uint64_t>(
             sourceValues_, metadata_, false,
             [](uint64_t x, uint64_t y) -> uint64_t { return x ^ y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -1334,7 +1587,7 @@ void Instruction::execute() {
             [](uint8_t x, uint8_t y) -> uint8_t { return x ^ y; });
         break;
       }
-      case Opcode::AArch64_EXTRACT_ZPMXI_H_B: {  // MOVA zd.b, pg/m, zanh.b[ws,
+      case Opcode::AArch64_EXTRACT_ZPMXI_H_B: {  // mova zd.b, pg/m, zanh.b[ws,
                                                  // #imm]
         // SME
         // Check core is in correct context mode (check SM first)
@@ -1344,22 +1597,288 @@ void Instruction::execute() {
         const uint16_t rowCount = VL_bits / 8;
         const uint8_t* zd = sourceValues_[0].getAsVector<uint8_t>();
         const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
-        const uint64_t sliceNum =
+        const uint32_t sliceNum =
             (sourceValues_[2 + rowCount].get<uint32_t>() +
-             static_cast<uint32_t>(metadata_.operands[2].sme_index.disp)) %
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
             rowCount;
-        const uint8_t* zanRow =
+        const uint8_t* zaRow =
             sourceValues_[2 + sliceNum].getAsVector<uint8_t>();
-        uint8_t out[256] = {0};
 
+        uint8_t out[256] = {0};
         for (int elem = 0; elem < rowCount; elem++) {
-          uint64_t shifted_active = 1ull << ((elem % 64));
+          uint64_t shifted_active = 1ull << (elem % 64);
           if (pg[elem / 64] & shifted_active)
-            out[elem] = zanRow[elem];
+            out[elem] = zaRow[elem];
           else
             out[elem] = zd[elem];
         }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_H_D: {  // mova zd.d, pg/m, zanh.d[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
 
+        const uint16_t rowCount = VL_bits / 64;
+        const uint64_t* zd = sourceValues_[0].getAsVector<uint64_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+        const uint64_t* zaRow =
+            sourceValues_[2 + sliceNum].getAsVector<uint64_t>();
+
+        uint64_t out[32] = {0};
+        for (int elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 8) * 8);
+          if (pg[elem / 8] & shifted_active)
+            out[elem] = zaRow[elem];
+          else
+            out[elem] = zd[elem];
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_H_H: {  // mova zd.h, pg/m, zanh.h[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 16;
+        const uint16_t* zd = sourceValues_[0].getAsVector<uint16_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+        const uint16_t* zaRow =
+            sourceValues_[2 + sliceNum].getAsVector<uint16_t>();
+
+        uint16_t out[128] = {0};
+        for (int elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 32) * 2);
+          if (pg[elem / 32] & shifted_active)
+            out[elem] = zaRow[elem];
+          else
+            out[elem] = zd[elem];
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_H_Q: {  // mova zd.q, pg/m, zanh.q[ws]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 128;
+        // Use uint64_t as no 128-bit
+        const uint64_t* zd = sourceValues_[0].getAsVector<uint64_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            sourceValues_[2 + rowCount].get<uint32_t>() % rowCount;
+        // Use uint64_t as no 128-bit
+        const uint64_t* zaRow =
+            sourceValues_[2 + sliceNum].getAsVector<uint64_t>();
+
+        // Use uint64_t as no 128-bit
+        uint64_t out[32] = {0};
+        for (int elem = 0; elem < rowCount; elem++) {
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((elem % 4) * 16);
+          if (pg[elem / 4] & shifted_active) {
+            // Need to move two consecutive 64-bit elements
+            out[2 * elem] = zaRow[2 * elem];
+            out[2 * elem + 1] = zaRow[2 * elem + 1];
+          } else {
+            // Need to move two consecutive 64-bit elements
+            out[2 * elem] = zd[2 * elem];
+            out[2 * elem + 1] = zd[2 * elem + 1];
+          }
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_H_S: {  // mova zd.s, pg/m, zanh.s[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint32_t* zd = sourceValues_[0].getAsVector<uint32_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+        const uint32_t* zaRow =
+            sourceValues_[2 + sliceNum].getAsVector<uint32_t>();
+
+        uint32_t out[64] = {0};
+        for (int elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 16) * 4);
+          if (pg[elem / 16] & shifted_active)
+            out[elem] = zaRow[elem];
+          else
+            out[elem] = zd[elem];
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_V_B: {  // mova zd.b, pg/m, zanv.b[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 8;
+        const uint8_t* zd = sourceValues_[0].getAsVector<uint8_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+
+        uint8_t out[256] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << (elem % 64);
+          if (pg[elem / 64] & shifted_active)
+            out[elem] =
+                sourceValues_[2 + elem].getAsVector<uint8_t>()[sliceNum];
+          else
+            out[elem] = zd[elem];
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_V_D: {  // mova zd.d, pg/m, zanv.d[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 64;
+        const uint64_t* zd = sourceValues_[0].getAsVector<uint64_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+
+        uint64_t out[32] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 8) * 8);
+          if (pg[elem / 8] & shifted_active)
+            out[elem] =
+                sourceValues_[2 + elem].getAsVector<uint64_t>()[sliceNum];
+          else
+            out[elem] = zd[elem];
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_V_H: {  // mova zd.h, pg/m, zanv.h[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 16;
+        const uint16_t* zd = sourceValues_[0].getAsVector<uint16_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+
+        uint16_t out[128] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 32) * 2);
+          if (pg[elem / 32] & shifted_active)
+            out[elem] =
+                sourceValues_[2 + elem].getAsVector<uint16_t>()[sliceNum];
+          else
+            out[elem] = zd[elem];
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_V_Q: {  // mova zd.q, pg/m, zanv.q[ws]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 128;
+        // Use uint64_t as no 128-bit
+        const uint64_t* zd = sourceValues_[0].getAsVector<uint64_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            sourceValues_[2 + rowCount].get<uint32_t>() % rowCount;
+
+        // Use uint64_t as no 128-bit
+        uint64_t out[32] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((elem % 4) * 16);
+          if (pg[elem / 4] & shifted_active) {
+            // Need to move two consecutive 64-bit elements
+            const uint64_t* zaRow =
+                sourceValues_[2 + elem].getAsVector<uint64_t>();
+            out[2 * elem] = zaRow[2 * sliceNum];
+            out[2 * elem + 1] = zaRow[2 * sliceNum + 1];
+          } else {
+            // Need to move two consecutive 64-bit elements
+            out[2 * elem] = zd[2 * elem];
+            out[2 * elem + 1] = zd[2 * elem + 1];
+          }
+        }
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_EXTRACT_ZPMXI_V_S: {  // mova zd.s, pg/m, zanv.s[ws,
+                                                 // #imm]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint32_t* zd = sourceValues_[0].getAsVector<uint32_t>();
+        const uint64_t* pg = sourceValues_[1].getAsVector<uint64_t>();
+        const uint32_t sliceNum =
+            (sourceValues_[2 + rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[2].sme.slice_offset.imm)) %
+            rowCount;
+
+        uint32_t out[64] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 16) * 4);
+          if (pg[elem / 16] & shifted_active)
+            out[elem] =
+                sourceValues_[2 + elem].getAsVector<uint32_t>()[sliceNum];
+          else
+            out[elem] = zd[elem];
+        }
         results_[0] = {out, 256};
         break;
       }
@@ -1466,6 +1985,80 @@ void Instruction::execute() {
         results_[0] = {add_3ops<float>(sourceValues_), 256};
         break;
       }
+      case Opcode::AArch64_FADD_VG2_M2Z_D: {  // fadd za.d[wv, #off, vgx2],
+                                              // {zn1.d, zn2.d}
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 64;
+        // Get ZA stride between halves and index into each ZA half
+        const uint16_t zaStride = zaRowCount / 2;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+
+        // Pre-set all ZA result rows as only 2 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // For each source vector and ZA Row pair
+        for (int r = 0; r < 2; r++) {
+          // Get row in correct ZA half
+          const double* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<double>();
+          // Get current source vector
+          const double* znr =
+              sourceValues_[zaRowCount + 1 + r].getAsVector<double>();
+          double out[32] = {0.0};
+          // Loop over all elements and destructively add
+          for (int e = 0; e < elemCount; e++) {
+            out[e] = zaRow[e] + znr[e];
+          }
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_FADD_VG2_M2Z_S: {  // fadd za.s[wv, #off, vgx2],
+                                              // {zn1.s, zn2.s}
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+        // Get ZA stride between halves and index into each ZA half
+        const uint16_t zaStride = zaRowCount / 2;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+
+        // Pre-set all ZA result rows as only 2 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // For each source vector and ZA Row pair
+        for (int r = 0; r < 2; r++) {
+          // Get row in correct ZA half
+          const float* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<float>();
+          // Get current source vector
+          const float* znr =
+              sourceValues_[zaRowCount + 1 + r].getAsVector<float>();
+          float out[64] = {0.0f};
+          // Loop over all elements and destructively add
+          for (int e = 0; e < elemCount; e++) {
+            out[e] = zaRow[e] + znr[e];
+          }
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
       case Opcode::AArch64_FADD_ZPmI_D: {  // fadd zdn.d, pg/m, zdn.d, const
         results_[0] =
             sveAddPredicated_const<double>(sourceValues_, metadata_, VL_bits);
@@ -1502,6 +2095,16 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_FADDv4f32: {  // fadd vd.4s, vn.4s, vm.4s
         results_[0] = vecAdd_3ops<float, 4>(sourceValues_);
+        break;
+      }
+      case Opcode::AArch64_FADDV_VPZ_D: {  // faddv dd, p0, zn.d
+
+        results_[0] = sveFaddv_predicated<double>(sourceValues_, VL_bits);
+        break;
+      }
+      case Opcode::AArch64_FADDV_VPZ_S: {  // faddv sd, p0, zn.s
+
+        results_[0] = sveFaddv_predicated<float>(sourceValues_, VL_bits);
         break;
       }
       case Opcode::AArch64_FCADD_ZPmZ_D: {  // fcadd zdn.d, pg/m, zdn.d, zm.d,
@@ -1930,6 +2533,196 @@ void Instruction::execute() {
             [](double x, double y) -> double { return std::fmin(x, y); });
         break;
       }
+      case Opcode::AArch64_FMLA_VG4_M4Z4Z_D: {  // fmla za.d[wv, offs, vgx4],
+                                                // {zn1.d - zn4.d}, {zm1.d -
+                                                // zm4.d}
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 64;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Get sourceValues_ index of first zn and zm regs
+        const uint16_t n = zaRowCount + 1;
+        const uint16_t m = zaRowCount + 5;
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const double* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<double>();
+          const double* zn = sourceValues_[n + r].getAsVector<double>();
+          const double* zm = sourceValues_[m + r].getAsVector<double>();
+          double out[32] = {0.0};
+          for (int e = 0; e < elemCount; e++) {
+            out[e] = zaRow[e] + (zn[e] * zm[e]);
+          }
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_FMLA_VG4_M4Z4Z_S: {  // fmla za.s[wv, offs, vgx4],
+                                                // {zn1.s - zn4.s}, {zm1.s -
+                                                // zm4.s}
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Get sourceValues_ index of first zn and zm regs
+        const uint16_t n = zaRowCount + 1;
+        const uint16_t m = zaRowCount + 5;
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const float* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<float>();
+          const float* zn = sourceValues_[n + r].getAsVector<float>();
+          const float* zm = sourceValues_[m + r].getAsVector<float>();
+          float out[64] = {0.0f};
+          for (int e = 0; e < elemCount; e++) {
+            out[e] = zaRow[e] + (zn[e] * zm[e]);
+          }
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_FMLA_VG4_M4ZZI_D: {  // fmla za.d[wv, offs, vgx4],
+                                                // {zn1.d - zn4.d}, zm.d[index]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 64;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+        // Get zm vector and zm's index
+        const double* zm = sourceValues_[zaRowCount + 5].getAsVector<double>();
+        const int zmIndex = metadata_.operands[5].vector_index;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const double* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<double>();
+          const double* znr =
+              sourceValues_[zaRowCount + 1 + r].getAsVector<double>();
+          double out[32] = {0.0};
+          // Loop over all elements of output row vector `zaRow`
+          for (int e = 0; e < elemCount; e++) {
+            // This instruction multiplies each element of the current `znr` by
+            // an indexed element of `zm` and destructively adds the result to
+            // the corresponding element in the current `zaRow`.
+            //
+            // The index for `zm` specifies which element in each 128-bit
+            // segment to use. The 128-bit segment of `zm` currently in use
+            // corresponds to the 128-bit segment that the current element of
+            // `znr` and `zaRow` is within.
+
+            // MOD 2 as there are 2 64-bit elements per 128-bit segment of `zm`
+            const int zmSegBase = e - (e % 2);
+            out[e] = zaRow[e] + (znr[e] * zm[zmSegBase + zmIndex]);
+          }
+          // Update results_ for completed row
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_FMLA_VG4_M4ZZI_S: {  // fmla za.s[wv, offs, vgx4],
+                                                // {zn1.s - zn4.s}, zm.s[index]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+        // Get zm vector and zm's index
+        const float* zm = sourceValues_[zaRowCount + 5].getAsVector<float>();
+        const int zmIndex = metadata_.operands[5].vector_index;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const float* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<float>();
+          const float* znr =
+              sourceValues_[zaRowCount + 1 + r].getAsVector<float>();
+          float out[64] = {0.0f};
+          // Loop over all elements of output row vector `zaRow`
+          for (int e = 0; e < elemCount; e++) {
+            // This instruction multiplies each element of the current `znr` by
+            // an indexed element of `zm` and destructively adds the result to
+            // the corresponding element in the current `zaRow`.
+            //
+            // The index for `zm` specifies which element in each 128-bit
+            // segment to use. The 128-bit segment of `zm` currently in use
+            // corresponds to the 128-bit segment that the current element of
+            // `znr` and `zaRow` is within.
+
+            // MOD 4 as there are 4 32-bit elements per 128-bit segment of `zm`
+            const int zmSegBase = e - (e % 4);
+            out[e] = zaRow[e] + (znr[e] * zm[zmSegBase + zmIndex]);
+          }
+          // Update results_ for completed row
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
       case Opcode::AArch64_FMLA_ZPmZZ_D: {  // fmla zd.d, pg/m, zn.d, zm.d
         results_[0] = sveMlaPredicated_vecs<double>(sourceValues_, VL_bits);
         break;
@@ -2000,6 +2793,63 @@ void Instruction::execute() {
         results_[0] = vecFmlsIndexed_3vecs<float, 4>(sourceValues_, metadata_);
         break;
       }
+#if SIMENG_ENABLE_BF16 == 1
+      case Opcode::AArch64_BFMOPA_MPPZZ: {  // bfmopa zada.s, pn/m, pm/m, zn.h,
+                                            // zm.h
+        // SME
+        // BF16 -- EXPERIMENTAL
+        // Must be enabled at SimEng compile time
+        // Not verified to be working for all compilers or OSs.
+        // No Tests written
+
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        // Use uint16_t to get 2-byte elements
+        const uint16_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint16_t>();
+        const uint16_t* zm =
+            sourceValues_[rowCount + 3].getAsVector<uint16_t>();
+
+        // zn is row, zm is col
+        for (int row = 0; row < rowCount; row++) {
+          float outRow[64] = {0.0f};
+          // Shifted active is for bf16 elements
+          uint64_t shifted_active_row = 1ull << ((row % 32) * 2);
+          const float* zadaRow = sourceValues_[row].getAsVector<float>();
+          for (int col = 0; col < rowCount; col++) {
+            outRow[col] = zadaRow[col];
+            // Shifted active is for bf16 elements
+            uint64_t shifted_active_col = 1ull << ((col % 32) * 2);
+            bool pred_row1 = pn[(2 * row) / 32] & shifted_active_row;
+            bool pred_row2 = pn[(2 * row + 1) / 32] & shifted_active_row;
+            bool pred_col1 = pm[(2 * col) / 32] & shifted_active_col;
+            bool pred_col2 = pm[(2 * col + 1) / 32] & shifted_active_col;
+            if ((pred_row1 && pred_col1) || (pred_row2 && pred_col2)) {
+              float zn1, zn2, zm1, zm2;
+              // Horrible hack in order to convert bf16 (currently stored in a
+              // uint16_t) into a float.
+              // Each bf16 is copied into the most significant 16-bits of each
+              // float variable; given IEEE FP32 and BF16 have the same width
+              // exponent and one sign bit.
+              memcpy((uint16_t*)&zn1 + 1, &zn[2 * row], 2);
+              memcpy((uint16_t*)&zn2 + 1, &zn[2 * row + 1], 2);
+              memcpy((uint16_t*)&zm1 + 1, &zm[2 * col], 2);
+              memcpy((uint16_t*)&zm2 + 1, &zm[2 * col + 1], 2);
+              outRow[col] += (pred_row1 && pred_col1) ? zn1 * zm1 : 0.0f;
+              outRow[col] += (pred_row2 && pred_col2) ? zn2 * zm2 : 0.0f;
+            }
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+#endif
       case Opcode::AArch64_FMOPA_MPPZZ_D: {  // fmopa zada.d, pn/m, pm/m, zn.d,
                                              // zm.d
         // SME
@@ -2057,6 +2907,70 @@ void Instruction::execute() {
             if ((pm[col / 16] & shifted_active_col) &&
                 (pn[row / 16] & shifted_active_row))
               outRow[col] = zadaElem + (zn[row] * zm[col]);
+            else
+              outRow[col] = zadaElem;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_FMOPS_MPPZZ_D: {  // fmops zada.d, pn/m, pm/m, zn.d,
+                                             // zm.d
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const double* zn = sourceValues_[rowCount + 2].getAsVector<double>();
+        const double* zm = sourceValues_[rowCount + 3].getAsVector<double>();
+
+        // zn is row, zm is col
+        for (int row = 0; row < rowCount; row++) {
+          double outRow[32] = {0};
+          uint64_t shifted_active_row = 1ull << ((row % 8) * 8);
+          const double* zadaRow = sourceValues_[row].getAsVector<double>();
+          for (int col = 0; col < rowCount; col++) {
+            double zadaElem = zadaRow[col];
+            uint64_t shifted_active_col = 1ull << ((col % 8) * 8);
+            if ((pm[col / 8] & shifted_active_col) &&
+                (pn[row / 8] & shifted_active_row))
+              outRow[col] = zadaElem - (zn[row] * zm[col]);
+            else
+              outRow[col] = zadaElem;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_FMOPS_MPPZZ_S: {  // fmops zada.s, pn/m, pm/m, zn.s,
+                                             // zm.s
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[rowCount].getAsVector<uint64_t>();
+        const uint64_t* pm =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const float* zn = sourceValues_[rowCount + 2].getAsVector<float>();
+        const float* zm = sourceValues_[rowCount + 3].getAsVector<float>();
+
+        // zn is row, zm is col
+        for (int row = 0; row < rowCount; row++) {
+          float outRow[64] = {0};
+          uint64_t shifted_active_row = 1ull << ((row % 16) * 4);
+          const float* zadaRow = sourceValues_[row].getAsVector<float>();
+          for (int col = 0; col < rowCount; col++) {
+            float zadaElem = zadaRow[col];
+            uint64_t shifted_active_col = 1ull << ((col % 16) * 4);
+            if ((pm[col / 16] & shifted_active_col) &&
+                (pn[row / 16] & shifted_active_row))
+              outRow[col] = zadaElem - (zn[row] * zm[col]);
             else
               outRow[col] = zadaElem;
           }
@@ -2645,6 +3559,325 @@ void Instruction::execute() {
                                                  VL_bits, false, false);
         break;
       }
+
+      case Opcode::AArch64_INSERT_MXIPZ_H_B: {  // mova zadh.b[ws, #imm], pg/m,
+                                                // zn.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 8;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint8_t* zaRow = sourceValues_[sliceNum].getAsVector<uint8_t>();
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint8_t* zn = sourceValues_[rowCount + 2].getAsVector<uint8_t>();
+
+        uint8_t out[256] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << (elem % 64);
+          if (pg[elem / 64] & shifted_active)
+            out[elem] = zn[elem];
+          else
+            out[elem] = zaRow[elem];
+        }
+        // Need to update whole za tile
+        for (uint16_t row = 0; row < rowCount; row++) {
+          results_[row] =
+              (row == sliceNum) ? RegisterValue(out, 256) : sourceValues_[row];
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_H_D: {  // mova zadh.d[ws, #imm], pg/m,
+                                                // zn.d
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 64;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint64_t* zaRow = sourceValues_[sliceNum].getAsVector<uint64_t>();
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint64_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint64_t>();
+
+        uint64_t out[32] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 8) * 8);
+          if (pg[elem / 8] & shifted_active)
+            out[elem] = zn[elem];
+          else
+            out[elem] = zaRow[elem];
+        }
+        // Need to update whole za tile
+        for (uint16_t row = 0; row < rowCount; row++) {
+          results_[row] =
+              (row == sliceNum) ? RegisterValue(out, 256) : sourceValues_[row];
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_H_H: {  // mova zadh.h[ws, #imm], pg/m,
+                                                // zn.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 16;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint16_t* zaRow = sourceValues_[sliceNum].getAsVector<uint16_t>();
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint16_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint16_t>();
+
+        uint16_t out[128] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 32) * 2);
+          if (pg[elem / 32] & shifted_active)
+            out[elem] = zn[elem];
+          else
+            out[elem] = zaRow[elem];
+        }
+        // Need to update whole za tile
+        for (uint16_t row = 0; row < rowCount; row++) {
+          results_[row] =
+              (row == sliceNum) ? RegisterValue(out, 256) : sourceValues_[row];
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_H_Q: {  // mova zadh.q[ws], pg/m, zn.q
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 128;
+        const uint32_t sliceNum =
+            sourceValues_[rowCount].get<uint32_t>() % rowCount;
+        // Use uint64_t in place of 128-bit
+        const uint64_t* zaRow = sourceValues_[sliceNum].getAsVector<uint64_t>();
+
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        // Use uint64_t in place of 128-bit
+        const uint64_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint64_t>();
+
+        // Use uint64_t in place of 128-bit
+        uint64_t out[32] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((elem % 4) * 16);
+          if (pg[elem / 4] & shifted_active) {
+            // Need to move two consecutive 64-bit elements
+            out[(2 * elem)] = zn[(2 * elem)];
+            out[(2 * elem + 1)] = zn[(2 * elem + 1)];
+          } else {
+            // Need to move two consecutive 64-bit elements
+            out[(2 * elem)] = zaRow[(2 * elem)];
+            out[(2 * elem + 1)] = zaRow[(2 * elem + 1)];
+          }
+        }
+        // Need to update whole za tile
+        for (uint16_t row = 0; row < rowCount; row++) {
+          results_[row] =
+              (row == sliceNum) ? RegisterValue(out, 256) : sourceValues_[row];
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_H_S: {  // mova zadh.s[ws, #imm], pg/m,
+                                                // zn.s
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint32_t* zaRow = sourceValues_[sliceNum].getAsVector<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint32_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint32_t>();
+
+        uint32_t out[64] = {0};
+        for (uint16_t elem = 0; elem < rowCount; elem++) {
+          uint64_t shifted_active = 1ull << ((elem % 16) * 4);
+          if (pg[elem / 16] & shifted_active)
+            out[elem] = zn[elem];
+          else
+            out[elem] = zaRow[elem];
+        }
+        // Need to update whole za tile
+        for (uint16_t row = 0; row < rowCount; row++) {
+          results_[row] =
+              (row == sliceNum) ? RegisterValue(out, 256) : sourceValues_[row];
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_V_B: {  // mova zadv.b[ws, #imm], pg/m,
+                                                // zn.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 8;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint8_t* zn = sourceValues_[rowCount + 2].getAsVector<uint8_t>();
+
+        for (uint16_t i = 0; i < rowCount; i++) {
+          const uint8_t* row = sourceValues_[i].getAsVector<uint8_t>();
+          uint8_t out[256] = {0};
+          memcpy(out, row, rowCount * sizeof(uint8_t));
+          uint64_t shifted_active = 1ull << (i % 64);
+          if (pg[i / 64] & shifted_active) out[sliceNum] = zn[i];
+          results_[i] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_V_D: {  // mova zadv.d[ws, #imm], pg/m,
+                                                // zn.d
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 64;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint64_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint64_t>();
+
+        for (uint16_t i = 0; i < rowCount; i++) {
+          const uint64_t* row = sourceValues_[i].getAsVector<uint64_t>();
+          uint64_t out[32] = {0};
+          memcpy(out, row, rowCount * sizeof(uint64_t));
+          uint64_t shifted_active = 1ull << ((i % 8) * 8);
+          if (pg[i / 8] & shifted_active) out[sliceNum] = zn[i];
+          results_[i] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_V_H: {  // mova zadv.h[ws, #imm], pg/m,
+                                                // zn.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 16;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint16_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint16_t>();
+
+        for (uint16_t i = 0; i < rowCount; i++) {
+          const uint16_t* row = sourceValues_[i].getAsVector<uint16_t>();
+          uint16_t out[128] = {0};
+          memcpy(out, row, rowCount * sizeof(uint16_t));
+          uint64_t shifted_active = 1ull << ((i % 32) * 2);
+          if (pg[i / 32] & shifted_active) out[sliceNum] = zn[i];
+          results_[i] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_V_Q: {  // mova zadv.q[ws], pg/m, zn.q
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 128;
+        const uint32_t sliceNum =
+            sourceValues_[rowCount].get<uint32_t>() % rowCount;
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        // Use uint64_t in place of 128-bit
+        const uint64_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint64_t>();
+
+        for (uint16_t i = 0; i < rowCount; i++) {
+          // Use uint64_t in place of 128-bit
+          const uint64_t* row = sourceValues_[i].getAsVector<uint64_t>();
+          uint64_t out[32] = {0};
+          // *2 in memcpy as need 128-bit elements but using uint64_t
+          memcpy(out, row, rowCount * sizeof(uint64_t) * 2);
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((i % 4) * 16);
+          if (pg[i / 4] & shifted_active) {
+            // Need to move two consecutive 64-bit elements
+            out[2 * sliceNum] = zn[2 * i];
+            out[2 * sliceNum + 1] = zn[2 * i + 1];
+          }
+          results_[i] = {out, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_INSERT_MXIPZ_V_S: {  // mova zadv.s[ws, #imm], pg/m,
+                                                // zn.s
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 32;
+        const uint32_t sliceNum =
+            (sourceValues_[rowCount].get<uint32_t>() +
+             static_cast<uint32_t>(
+                 metadata_.operands[0].sme.slice_offset.imm)) %
+            rowCount;
+        const uint64_t* pg =
+            sourceValues_[rowCount + 1].getAsVector<uint64_t>();
+        const uint32_t* zn =
+            sourceValues_[rowCount + 2].getAsVector<uint32_t>();
+
+        for (uint16_t i = 0; i < rowCount; i++) {
+          const uint32_t* row = sourceValues_[i].getAsVector<uint32_t>();
+          uint32_t out[64] = {0};
+          memcpy(out, row, rowCount * sizeof(uint32_t));
+          uint64_t shifted_active = 1ull << ((i % 16) * 4);
+          if (pg[i / 16] & shifted_active) out[sliceNum] = zn[i];
+          results_[i] = {out, 256};
+        }
+        break;
+      }
       case Opcode::AArch64_INSvi16gpr: {  // ins vd.h[index], wn
         results_[0] =
             vecInsIndex_gpr<uint16_t, uint32_t, 8>(sourceValues_, metadata_);
@@ -2677,10 +3910,43 @@ void Instruction::execute() {
         results_[0] = sveLastBScalar<uint64_t>(sourceValues_, VL_bits);
         break;
       }
+      case Opcode::AArch64_LD1_MXIPXX_H_B: {  // ld1b {zath.b[ws, #imm]}, pg/z,
+                                              // [<xn|sp>{, xm}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 8;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint16_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+        const uint8_t* data = memoryData_[0].getAsVector<uint8_t>();
+
+        uint8_t out[256] = {0};
+        for (int i = 0; i < partition_num; i++) {
+          uint64_t shifted_active = 1ull << (i % 64);
+          if (pg[i / 64] & shifted_active) {
+            out[i] = data[i];
+          } else {
+            out[i] = 0;
+          }
+        }
+
+        // All Slice vectors are added to results[] so need to update the
+        // correct one
+        for (uint16_t i = 0; i < partition_num; i++) {
+          results_[i] = sourceValues_[i];
+        }
+        results_[sliceNum] = {out, 256};
+        break;
+      }
       case Opcode::AArch64_LD1_MXIPXX_H_D: {  // ld1d {zath.d[ws, #imm]}, pg/z,
                                               // [<xn|sp>{, xm, lsl #3}]
         // SME, LOAD
-        // Not in right context mode. Raise exception
+        // If not in right context mode, raise exception
         if (!ZAenabled) return ZAdisabled();
 
         const uint16_t partition_num = VL_bits / 64;
@@ -2688,8 +3954,8 @@ void Instruction::execute() {
         const uint64_t* pg =
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
-        const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+        const uint16_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
         const uint64_t* data = memoryData_[0].getAsVector<uint64_t>();
 
         uint64_t out[32] = {0};
@@ -2704,47 +3970,87 @@ void Instruction::execute() {
 
         // All Slice vectors are added to results[] so need to update the
         // correct one
-        for (int i = 0; i < partition_num; i++) {
-          if (i == sliceNum)
-            results_[i] = {out, 256};
-          else
-            // Maintain un-updated rows.
-            results_[i] = sourceValues_[i];
+        for (uint16_t i = 0; i < partition_num; i++) {
+          results_[i] = sourceValues_[i];
         }
+        results_[sliceNum] = {out, 256};
         break;
       }
-      case Opcode::AArch64_LD1_MXIPXX_V_D: {  // ld1d {zatv.d[ws, #imm]}, pg/z,
-                                              // [<xn|sp>{, xm, lsl #3}]
+      case Opcode::AArch64_LD1_MXIPXX_H_H: {  // ld1h {zath.h[ws, #imm]}, pg/z,
+                                              // [<xn|sp>{, xm, LSL #1}]
         // SME, LOAD
-        // Not in right context mode. Raise exception
+        // If not in right context mode, raise exception
         if (!ZAenabled) return ZAdisabled();
 
-        const uint16_t partition_num = VL_bits / 64;
+        const uint16_t partition_num = VL_bits / 16;
         const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
         const uint64_t* pg =
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+        const uint16_t* data = memoryData_[0].getAsVector<uint16_t>();
+
+        uint16_t out[128] = {0};
+        for (int i = 0; i < partition_num; i++) {
+          uint64_t shifted_active = 1ull << ((i % 32) * 2);
+          if (pg[i / 32] & shifted_active) {
+            out[i] = data[i];
+          } else {
+            out[i] = 0;
+          }
+        }
+
+        // All Slice vectors are added to results[] so need to update the
+        // correct one
+        for (uint16_t i = 0; i < partition_num; i++) {
+          results_[i] = sourceValues_[i];
+        }
+        results_[sliceNum] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_LD1_MXIPXX_H_Q: {  // ld1q {zath.q[ws]}, pg/z,
+                                              // [<xn|sp>{, xm, LSL #4}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 128;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum = ws % partition_num;
+        // Use uint64_t as no 128-bit type
         const uint64_t* data = memoryData_[0].getAsVector<uint64_t>();
 
+        // Use uint64_t as no 128-bit type
+        uint64_t out[32] = {0};
         for (int i = 0; i < partition_num; i++) {
-          uint64_t* row =
-              const_cast<uint64_t*>(sourceValues_[i].getAsVector<uint64_t>());
-          uint64_t shifted_active = 1ull << ((i % 8) * 8);
-          if (pg[i / 8] & shifted_active) {
-            row[sliceNum] = data[i];
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((i % 4) * 16);
+          if (pg[i / 4] & shifted_active) {
+            // As using uint64_t need to modify 2 elements
+            out[2 * i] = data[2 * i];
+            out[2 * i + 1] = data[2 * i + 1];
           } else {
-            row[sliceNum] = 0;
+            out[2 * i] = 0;
+            out[2 * i + 1] = 0;
           }
-          results_[i] = RegisterValue(reinterpret_cast<char*>(row), 256);
         }
+
+        // All Slice vectors are added to results[] so need to update the
+        // correct one
+        for (uint16_t i = 0; i < partition_num; i++) {
+          results_[i] = sourceValues_[i];
+        }
+        results_[sliceNum] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1_MXIPXX_H_S: {  // ld1w {zath.s[ws, #imm]}, pg/z,
                                               // [<xn|sp>{, xm, LSL #2}]
         // SME, LOAD
-        // Not in right context mode. Raise exception
+        // If not in right context mode, raise exception
         if (!ZAenabled) return ZAdisabled();
 
         const uint16_t partition_num = VL_bits / 32;
@@ -2753,7 +4059,7 @@ void Instruction::execute() {
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
         const uint32_t* data = memoryData_[0].getAsVector<uint32_t>();
 
         uint32_t out[64] = {0};
@@ -2768,19 +4074,129 @@ void Instruction::execute() {
 
         // All Slice vectors are added to results[] so need to update the
         // correct one
+        for (uint16_t i = 0; i < partition_num; i++) {
+          results_[i] = sourceValues_[i];
+        }
+        results_[sliceNum] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_LD1_MXIPXX_V_B: {  // ld1b {zatv.b[ws, #imm]}, pg/z,
+                                              // [<xn|sp>{, xm}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 8;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+        const uint8_t* data = memoryData_[0].getAsVector<uint8_t>();
+
         for (int i = 0; i < partition_num; i++) {
-          if (i == sliceNum)
-            results_[i] = {out, 256};
-          else
-            // Maintain un-updated rows.
-            results_[i] = sourceValues_[i];
+          const uint8_t* row = sourceValues_[i].getAsVector<uint8_t>();
+          uint8_t out[256] = {0};
+          memcpy(out, row, partition_num * sizeof(uint8_t));
+          uint64_t shifted_active = 1ull << (i % 64);
+          if (pg[i / 64] & shifted_active) {
+            out[sliceNum] = data[i];
+          }
+          results_[i] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_LD1_MXIPXX_V_D: {  // ld1d {zatv.d[ws, #imm]}, pg/z,
+                                              // [<xn|sp>{, xm, lsl #3}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 64;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+        const uint64_t* data = memoryData_[0].getAsVector<uint64_t>();
+
+        for (int i = 0; i < partition_num; i++) {
+          const uint64_t* row = sourceValues_[i].getAsVector<uint64_t>();
+          uint64_t out[32] = {0};
+          memcpy(out, row, partition_num * sizeof(uint64_t));
+          uint64_t shifted_active = 1ull << ((i % 8) * 8);
+          if (pg[i / 8] & shifted_active) {
+            out[sliceNum] = data[i];
+          }
+          results_[i] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_LD1_MXIPXX_V_H: {  // ld1h {zatv.h[ws, #imm]}, pg/z,
+                                              // [<xn|sp>{, xm, lsl #1}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 16;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+        const uint16_t* data = memoryData_[0].getAsVector<uint16_t>();
+
+        for (int i = 0; i < partition_num; i++) {
+          const uint16_t* row = sourceValues_[i].getAsVector<uint16_t>();
+          uint16_t out[128] = {0};
+          memcpy(out, row, partition_num * sizeof(uint16_t));
+          uint64_t shifted_active = 1ull << ((i % 32) * 2);
+          if (pg[i / 32] & shifted_active) {
+            out[sliceNum] = data[i];
+          }
+          results_[i] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_LD1_MXIPXX_V_Q: {  // ld1q {zatv.q[ws]}, pg/z,
+                                              // [<xn|sp>{, xm, lsl #4}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 128;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum = ws % partition_num;
+        // Using uint64_t as no 128-bit data type
+        const uint64_t* data = memoryData_[0].getAsVector<uint64_t>();
+
+        for (int i = 0; i < partition_num; i++) {
+          // Using uint64_t as no 128-bit data type
+          const uint64_t* row = sourceValues_[i].getAsVector<uint64_t>();
+          uint64_t out[32] = {0};
+          // *2 in memcpy as need 128-bit but using uint64_t
+          memcpy(out, row, partition_num * sizeof(uint64_t) * 2);
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((i % 4) * 16);
+          if (pg[i / 4] & shifted_active) {
+            // As using uint64_t need to modify 2 elements
+            out[2 * sliceNum] = data[2 * i];
+            out[2 * sliceNum + 1] = data[2 * i + 1];
+          }
+          results_[i] = RegisterValue(out, 256);
         }
         break;
       }
       case Opcode::AArch64_LD1_MXIPXX_V_S: {  // ld1w {zatv.s[ws, #imm]}, pg/z,
                                               // [<xn|sp>{, xm, LSL #2}]
         // SME, LOAD
-        // Not in right context mode. Raise exception
+        // If not in right context mode, raise exception
         if (!ZAenabled) return ZAdisabled();
 
         const uint16_t partition_num = VL_bits / 32;
@@ -2789,23 +4205,22 @@ void Instruction::execute() {
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
         const uint32_t* data = memoryData_[0].getAsVector<uint32_t>();
 
         for (int i = 0; i < partition_num; i++) {
-          uint32_t* row =
-              const_cast<uint32_t*>(sourceValues_[i].getAsVector<uint32_t>());
+          const uint32_t* row = sourceValues_[i].getAsVector<uint32_t>();
+          uint32_t out[64] = {0};
+          memcpy(out, row, partition_num * sizeof(uint32_t));
           uint64_t shifted_active = 1ull << ((i % 16) * 4);
           if (pg[i / 16] & shifted_active) {
-            row[sliceNum] = data[i];
-          } else {
-            row[sliceNum] = 0;
+            out[sliceNum] = data[i];
           }
-          results_[i] = RegisterValue(reinterpret_cast<char*>(row), 256);
+          results_[i] = RegisterValue(out, 256);
         }
         break;
       }
-      case Opcode::AArch64_LD1B: {  // ld1b  {zt.b}, pg/z, [xn, xm]
+      case Opcode::AArch64_LD1B: {  // ld1b {zt.b}, pg/z, [xn, xm]
         // LOAD
         const uint64_t* p = sourceValues_[0].getAsVector<uint64_t>();
 
@@ -2824,8 +4239,8 @@ void Instruction::execute() {
         results_[0] = {out, 256};
         break;
       }
-      case Opcode::AArch64_LD1B_IMM_REAL: {  // ld1b {zt.b}, pg/z, [xn{, #imm,
-                                             // mul vl}]
+      case Opcode::AArch64_LD1B_IMM: {  // ld1b {zt.b}, pg/z, [xn{, #imm,
+                                        // mul vl}]
         // LOAD
         const uint64_t* p = sourceValues_[0].getAsVector<uint64_t>();
 
@@ -2841,6 +4256,69 @@ void Instruction::execute() {
           }
         }
         results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_LD1B_2Z:  // ld1b {zt1.b, zt2.b}, png/z, [xn, xm]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1B_2Z_IMM: {  // ld1b {zt1.b, zt2.b}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint8_t, 2>(pn, VL_bits);
+
+        uint8_t out[2][256] = {{0}, {0}};
+        const uint16_t partition_num = VL_bits / 8;
+
+        for (int r = 0; r < 2; r++) {
+          const uint8_t* data = memoryData_[r].getAsVector<uint8_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << (i % 64);
+            if (preds[r][i / 64] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        break;
+      }
+      case Opcode::AArch64_LD1B_4Z_STRIDED:  // ld1b {zt1.b, zt2.b, zt3.b,
+                                             // zt4.b}, png/z, [xn, xm]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1B_4Z_STRIDED_IMM:  // ld1b {zt1.b, zt2.b, zt3.b,
+                                                 // zt4.b}, png/z, [xn{, #imm,
+                                                 // mul vl}]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1B_4Z:  // ld1b {zt1.b - zt4.b}, png/z, [xn, xm]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1B_4Z_IMM: {  // ld1b {zt1.b - zt4.b}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint8_t, 4>(pn, VL_bits);
+
+        uint8_t out[4][256] = {{0}, {0}, {0}, {0}};
+        const uint16_t partition_num = VL_bits / 8;
+
+        for (int r = 0; r < 4; r++) {
+          const uint8_t* data = memoryData_[r].getAsVector<uint8_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << (i % 64);
+            if (preds[r][i / 64] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        results_[2] = {out[2], 256};
+        results_[3] = {out[3], 256};
         break;
       }
       case Opcode::AArch64_LD1D: {  // ld1d  {zt.d}, pg/z, [xn, xm, lsl #3]
@@ -2862,8 +4340,60 @@ void Instruction::execute() {
         results_[0] = {out, 256};
         break;
       }
-      case Opcode::AArch64_LD1D_IMM_REAL: {  // ld1d  {zt.d}, pg/z, [xn{, #imm,
-                                             // mul vl}]
+      case Opcode::AArch64_LD1D_2Z_IMM: {  // ld1d {zt1.d, zt2.d}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint64_t, 2>(pn, VL_bits);
+
+        uint64_t out[2][32] = {{0}, {0}};
+        const uint16_t partition_num = VL_bits / 64;
+
+        for (int r = 0; r < 2; r++) {
+          const uint64_t* data = memoryData_[r].getAsVector<uint64_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << ((i % 8) * 8);
+            if (preds[r][i / 8] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        break;
+      }
+      case Opcode::AArch64_LD1D_4Z:  // ld1d {zt1.d - zt4.d}, png/z, [xn,
+                                     // xm, lsl #3]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1D_4Z_IMM: {  // ld1d {zt1.d - zt4.d}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint64_t, 4>(pn, VL_bits);
+
+        uint64_t out[4][32] = {{0}, {0}, {0}, {0}};
+        const uint16_t partition_num = VL_bits / 64;
+
+        for (int r = 0; r < 4; r++) {
+          const uint64_t* data = memoryData_[r].getAsVector<uint64_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << ((i % 8) * 8);
+            if (preds[r][i / 8] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        results_[2] = {out[2], 256};
+        results_[3] = {out[3], 256};
+        break;
+      }
+      case Opcode::AArch64_LD1D_IMM: {  // ld1d  {zt.d}, pg/z, [xn{, #imm,
+                                        // mul vl}]
         // LOAD
         const uint64_t* p = sourceValues_[0].getAsVector<uint64_t>();
 
@@ -2882,6 +4412,10 @@ void Instruction::execute() {
         results_[0] = {out, 256};
         break;
       }
+      case Opcode::AArch64_LD1H_IMM:  // ld1h  {zt.h}, pg/z, [xn{, #imm, mul
+                                      // vl}]
+        // LOAD
+        [[fallthrough]];
       case Opcode::AArch64_LD1H: {  // ld1h  {zt.h}, pg/z, [xn, xm, lsl #1]
         // LOAD
         const uint64_t* p = sourceValues_[0].getAsVector<uint64_t>();
@@ -2901,18 +4435,55 @@ void Instruction::execute() {
         results_[0] = {out, 256};
         break;
       }
+      case Opcode::AArch64_LD1H_2Z:  // ld1h {zt1.h, zt2.h}, png/z, [xn, xm,
+                                     // lsl #1]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1H_2Z_IMM: {  // ld1h {zt1.h, zt2.h}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint16_t, 2>(pn, VL_bits);
+
+        uint16_t out[2][128] = {{0}, {0}};
+        const uint16_t partition_num = VL_bits / 16;
+
+        for (int r = 0; r < 2; r++) {
+          const uint16_t* data = memoryData_[r].getAsVector<uint16_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << ((i % 32) * 2);
+            if (preds[r][i / 32] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        break;
+      }
       case Opcode::AArch64_LD1Onev16b: {  // ld1 {vt.16b} [xn]
         results_[0] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
         break;
       }
       case Opcode::AArch64_LD1Onev16b_POST: {  // ld1 {vt.16b}, [xn], <#imm|xm>
-        results_[0] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
-
         // if #imm post-index, value can only be 16
-        const uint64_t postIndex = (metadata_.operands[2].type == ARM64_OP_REG)
-                                       ? sourceValues_[1].get<uint64_t>()
-                                       : 16;
-        results_[1] = sourceValues_[0].get<uint64_t>() + postIndex;
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[1].get<uint64_t>()
+                : 16;
+        results_[0] = sourceValues_[0].get<uint64_t>() + postIndex;
+        results_[1] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
+        break;
+      }
+      case Opcode::AArch64_LD1Onev8b_POST: {  // ld1 {vt.8b}, [xn], <#imm|xm>
+        // if #imm post-index, value can only be 8
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[1].get<uint64_t>()
+                : 8;
+        results_[0] = sourceValues_[0].get<uint64_t>() + postIndex;
+        results_[1] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
         break;
       }
       case Opcode::AArch64_LD1RD_IMM: {  // ld1rd {zt.d}, pg/z, [xn, #imm]
@@ -2939,6 +4510,30 @@ void Instruction::execute() {
           }
         }
 
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_LD1RQ_B:        // ld1rqb {zd.b}, pg/z, [xn, xm]
+      case Opcode::AArch64_LD1RQ_B_IMM: {  // ld1rqb {zd.b}, pg/z, [xn{, #imm }]
+        // LOAD
+        const uint64_t* p = sourceValues_[0].getAsVector<uint64_t>();
+        const uint16_t partition_num = VL_bits / 8;
+        uint8_t out[256] = {0};
+        const uint8_t* data = memoryData_[0].getAsVector<uint8_t>();
+
+        // Get mini-vector (quadword)
+        uint8_t mini[16] = {0};
+        for (int i = 0; i < 16; i++) {
+          uint64_t shifted_active = 1ull << (i % 64);
+          if (p[i / 64] & shifted_active) {
+            mini[i] = data[i];
+          }
+        }
+
+        // Duplicate mini-vector into output vector
+        for (int i = 0; i < partition_num; i++) {
+          out[i] = mini[i % 16];
+        }
         results_[0] = {out, 256};
         break;
       }
@@ -3055,9 +4650,9 @@ void Instruction::execute() {
         uint8_t val = memoryData_[0].get<uint8_t>();
         uint8_t out[16] = {val, val, val, val, val, val, val, val,
                            val, val, val, val, val, val, val, val};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv1d: {  // ld1r {vt.1d}, [xn]
@@ -3071,9 +4666,9 @@ void Instruction::execute() {
         // LOAD
         uint64_t val = memoryData_[0].get<uint64_t>();
         uint64_t out[2] = {val, 0};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv2d: {  // ld1r {vt.2d}, [xn]
@@ -3087,9 +4682,9 @@ void Instruction::execute() {
         // LOAD
         uint64_t val = memoryData_[0].get<uint64_t>();
         uint64_t out[2] = {val, val};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv2s: {  // ld1r {vt.2s}, [xn]
@@ -3103,9 +4698,9 @@ void Instruction::execute() {
         // LOAD
         uint32_t val = memoryData_[0].get<uint32_t>();
         uint32_t out[4] = {val, val, 0, 0};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv4h: {  // ld1r {vt.4h}, [xn]
@@ -3119,9 +4714,9 @@ void Instruction::execute() {
         // LOAD
         uint16_t val = memoryData_[0].get<uint16_t>();
         uint16_t out[8] = {val, val, val, val, 0, 0, 0, 0};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv4s: {  // ld1r {vt.4s}, [xn]
@@ -3135,9 +4730,9 @@ void Instruction::execute() {
         // LOAD
         uint32_t val = memoryData_[0].get<uint32_t>();
         uint32_t out[4] = {val, val, val, val};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv8b: {  // ld1r {vt.8b}, [xn]
@@ -3153,9 +4748,9 @@ void Instruction::execute() {
         uint8_t val = memoryData_[0].get<uint8_t>();
         uint8_t out[16] = {val, val, val, val, val, val, val, val,
                            0,   0,   0,   0,   0,   0,   0,   0};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Rv8h: {  // ld1r {vt.8h}, [xn]
@@ -3169,9 +4764,9 @@ void Instruction::execute() {
         // LOAD
         uint16_t val = memoryData_[0].get<uint16_t>();
         uint16_t out[8] = {val, val, val, val, val, val, val, val};
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
+        results_[0] =
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD1Fourv16b:  // ld1 {vt1.16b, vt2.16b, vt3.16b,
@@ -3198,15 +4793,16 @@ void Instruction::execute() {
       case Opcode::AArch64_LD1Fourv4s_POST: {  // ld1 {vt1.4s, vt2.4s, vt3.4s,
                                                // vt4.4s}, [xn], <#imm|xm>
         // LOAD
-        results_[0] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
-        results_[1] = memoryData_[1].zeroExtend(memoryData_[1].size(), 256);
-        results_[2] = memoryData_[2].zeroExtend(memoryData_[2].size(), 256);
-        results_[3] = memoryData_[3].zeroExtend(memoryData_[3].size(), 256);
         // if #imm post-index, value can only be 64
-        const uint64_t postIndex = (metadata_.operands[5].type == ARM64_OP_REG)
-                                       ? sourceValues_[1].get<uint64_t>()
-                                       : 64;
-        results_[4] = sourceValues_[0].get<uint64_t>() + postIndex;
+        const uint64_t postIndex =
+            (metadata_.operands[5].type == AARCH64_OP_REG)
+                ? sourceValues_[1].get<uint64_t>()
+                : 64;
+        results_[0] = sourceValues_[0].get<uint64_t>() + postIndex;
+        results_[1] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
+        results_[2] = memoryData_[1].zeroExtend(memoryData_[1].size(), 256);
+        results_[3] = memoryData_[2].zeroExtend(memoryData_[2].size(), 256);
+        results_[4] = memoryData_[3].zeroExtend(memoryData_[3].size(), 256);
         break;
       }
       case Opcode::AArch64_LD1Twov16b:  // ld1 {vt1.16b, vt2.16b}, [xn]
@@ -3225,17 +4821,20 @@ void Instruction::execute() {
       case Opcode::AArch64_LD1Twov2d_POST:  // ld1 {vt1.2d, vt2.2d}, [xn],
                                             // <#imm|xm>
         [[fallthrough]];
+      case Opcode::AArch64_LD1Twov8h_POST:  // ld1 {vt1.8h, vt2.8h}, [xn],
+                                            // <#imm|xm>
+        [[fallthrough]];
       case Opcode::AArch64_LD1Twov4s_POST: {  // ld1 {vt1.4s, vt2.4s}, [xn],
                                               // <#imm|xm>
         // LOAD
-        results_[0] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
-        results_[1] = memoryData_[1].zeroExtend(memoryData_[1].size(), 256);
-
         // if #imm post-index, value can only be 32
-        const uint64_t postIndex = (metadata_.operands[3].type == ARM64_OP_REG)
-                                       ? sourceValues_[1].get<uint64_t>()
-                                       : 32;
-        results_[2] = sourceValues_[0].get<uint64_t>() + postIndex;
+        const uint64_t postIndex =
+            (metadata_.operands[3].type == AARCH64_OP_REG)
+                ? sourceValues_[1].get<uint64_t>()
+                : 32;
+        results_[0] = sourceValues_[0].get<uint64_t>() + postIndex;
+        results_[1] = memoryData_[0].zeroExtend(memoryData_[0].size(), 256);
+        results_[2] = memoryData_[1].zeroExtend(memoryData_[1].size(), 256);
         break;
       }
       case Opcode::AArch64_LD1W: {  // ld1w  {zt.s}, pg/z, [xn, xm, lsl #2]
@@ -3257,8 +4856,8 @@ void Instruction::execute() {
         results_[0] = {out, 256};
         break;
       }
-      case Opcode::AArch64_LD1W_IMM_REAL: {  // ld1w  {zt.s}, pg/z, [xn{, #imm,
-                                             // mul vl}]
+      case Opcode::AArch64_LD1W_IMM: {  // ld1w  {zt.s}, pg/z, [xn{, #imm,
+                                        // mul vl}]
         // LOAD
         const uint64_t* p = sourceValues_[0].getAsVector<uint64_t>();
 
@@ -3275,6 +4874,62 @@ void Instruction::execute() {
           }
         }
         results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_LD1W_2Z:  // ld1w {zt1.s, zt2.s}, png/z, [xn, xm,
+                                     // lsl #2]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1W_2Z_IMM: {  // ld1w {zt1.s, zt2.s}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint32_t, 2>(pn, VL_bits);
+
+        uint32_t out[2][64] = {{0}, {0}};
+        const uint16_t partition_num = VL_bits / 32;
+
+        for (int r = 0; r < 2; r++) {
+          const uint32_t* data = memoryData_[r].getAsVector<uint32_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << ((i % 16) * 4);
+            if (preds[r][i / 16] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        break;
+      }
+      case Opcode::AArch64_LD1W_4Z:  // ld1w {zt1.s - zt4.s}, png/z, [xn,
+                                     // xm, lsl #2]
+        // LOAD
+        [[fallthrough]];
+      case Opcode::AArch64_LD1W_4Z_IMM: {  // ld1w {zt1.s - zt4.s}, png/z, [xn{,
+                                           // #imm, mul vl}]
+        // LOAD
+        const uint64_t pn = sourceValues_[0].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint32_t, 4>(pn, VL_bits);
+
+        uint32_t out[4][64] = {{0}, {0}, {0}, {0}};
+        const uint16_t partition_num = VL_bits / 32;
+
+        for (int r = 0; r < 4; r++) {
+          const uint32_t* data = memoryData_[r].getAsVector<uint32_t>();
+          for (int i = 0; i < partition_num; i++) {
+            uint64_t shifted_active = 1ull << ((i % 16) * 4);
+            if (preds[r][i / 16] & shifted_active) {
+              out[r][i] = data[i];
+            }
+          }
+        }
+        results_[0] = {out[0], 256};
+        results_[1] = {out[1], 256};
+        results_[2] = {out[2], 256};
+        results_[3] = {out[3], 256};
         break;
       }
       case Opcode::AArch64_LD1i32: {  // ld1 {vt.s}[index], [xn]
@@ -3307,9 +4962,13 @@ void Instruction::execute() {
         for (int i = 0; i < 2; i++) {
           out[i] = (i == index) ? memoryData_[0].get<uint64_t>() : vt[i];
         }
-        results_[0] = {out, 256};
-        results_[1] =
-            sourceValues_[1].get<uint64_t>() + metadata_.operands[2].imm;
+        // If post index is #imm, it can only be 8
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[1].get<uint64_t>()
+                : 8;
+        results_[0] = sourceValues_[1].get<uint64_t>() + postIndex;
+        results_[1] = {out, 256};
         break;
       }
       case Opcode::AArch64_LD2D:  // ld2d {zt1.d, zt2.d}, pg/z, [<xn|sp>, xm,
@@ -3351,19 +5010,19 @@ void Instruction::execute() {
         break;
       }
       case Opcode::AArch64_LD2Twov4s_POST: {  // ld2 {vt1.4s, vt2.4s}, [xn],
-                                              // #imm
+                                              // <xm|#imm>
         // LOAD
         const float* region1 = memoryData_[0].getAsVector<float>();
         const float* region2 = memoryData_[1].getAsVector<float>();
         float t1[4] = {region1[0], region1[2], region2[0], region2[2]};
         float t2[4] = {region1[1], region1[3], region2[1], region2[3]};
-        results_[0] = {t1, 256};
-        results_[1] = {t2, 256};
-        uint64_t offset = 32;
-        if (metadata_.operandCount == 4) {
-          offset = sourceValues_[3].get<uint64_t>();
-        }
-        results_[2] = sourceValues_[2].get<uint64_t>() + offset;
+        // #imm can only be 32
+        const uint64_t offset = (metadata_.operands[3].type == AARCH64_OP_REG)
+                                    ? sourceValues_[1].get<uint64_t>()
+                                    : 32;
+        results_[0] = sourceValues_[0].get<uint64_t>() + offset;
+        results_[1] = {t1, 256};
+        results_[2] = {t2, 256};
         break;
       }
       case Opcode::AArch64_LD3D_IMM: {  // ld3d {zt1.d, zt2.d, zt3.d}, pg/z,
@@ -3518,9 +5177,9 @@ void Instruction::execute() {
                             isInstruction(InsnType::isSVEData))
                                ? 256
                                : 8;
-        results_[0] = memoryData_[0].zeroExtend(dataSize_, regSize);
-        results_[1] = memoryData_[1].zeroExtend(dataSize_, regSize);
-        results_[2] =
+        results_[1] = memoryData_[0].zeroExtend(dataSize_, regSize);
+        results_[2] = memoryData_[1].zeroExtend(dataSize_, regSize);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[3].imm;
         break;
       }
@@ -3534,9 +5193,9 @@ void Instruction::execute() {
                             isInstruction(InsnType::isSVEData))
                                ? 256
                                : 8;
-        results_[0] = memoryData_[0].zeroExtend(dataSize_, regSize);
-        results_[1] = memoryData_[1].zeroExtend(dataSize_, regSize);
-        results_[2] =
+        results_[1] = memoryData_[0].zeroExtend(dataSize_, regSize);
+        results_[2] = memoryData_[1].zeroExtend(dataSize_, regSize);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[2].mem.disp;
         break;
       }
@@ -3548,15 +5207,15 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_LDRBBpost: {  // ldrb wt, [xn], #imm
         // LOAD
-        results_[0] = memoryData_[0].zeroExtend(1, 8);
-        results_[1] =
+        results_[1] = memoryData_[0].zeroExtend(1, 8);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
         break;
       }
       case Opcode::AArch64_LDRBBpre: {  // ldrb wt, [xn, #imm]!
         // LOAD
-        results_[0] = memoryData_[0].zeroExtend(1, 8);
-        results_[1] =
+        results_[1] = memoryData_[0].zeroExtend(1, 8);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
         break;
       }
@@ -3604,8 +5263,8 @@ void Instruction::execute() {
                             isInstruction(InsnType::isSVEData))
                                ? 256
                                : 8;
-        results_[0] = memoryData_[0].zeroExtend(dataSize_, regSize);
-        results_[1] =
+        results_[1] = memoryData_[0].zeroExtend(dataSize_, regSize);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
         break;
       }
@@ -3621,8 +5280,8 @@ void Instruction::execute() {
                             isInstruction(InsnType::isSVEData))
                                ? 256
                                : 8;
-        results_[0] = memoryData_[0].zeroExtend(dataSize_, regSize);
-        results_[1] =
+        results_[1] = memoryData_[0].zeroExtend(dataSize_, regSize);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
         break;
       }
@@ -3638,15 +5297,15 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_LDRHHpost: {  // ldrh wt, [xn], #imm
         // LOAD
-        results_[0] = memoryData_[0].zeroExtend(2, 8);
-        results_[1] =
+        results_[1] = memoryData_[0].zeroExtend(2, 8);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
         break;
       }
       case Opcode::AArch64_LDRHHpre: {  // ldrh wt, [xn, #imm]!
         // LOAD
-        results_[0] = memoryData_[0].zeroExtend(2, 8);
-        results_[1] =
+        results_[1] = memoryData_[0].zeroExtend(2, 8);
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[1].mem.disp;
         break;
       }
@@ -3668,6 +5327,15 @@ void Instruction::execute() {
       case Opcode::AArch64_LDRQroX: {  // ldr qt, [xn, xm, {extend {#amount}}]
         // LOAD
         results_[0] = memoryData_[0].zeroExtend(16, 256);
+        break;
+      }
+      case Opcode::AArch64_LDRSBWpost: {  // ldrsb wt, [xn], #imm
+        // LOAD
+        results_[1] =
+            RegisterValue(static_cast<int32_t>(memoryData_[0].get<int8_t>()), 4)
+                .zeroExtend(4, 8);
+        results_[0] = RegisterValue(
+            sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm, 8);
         break;
       }
       case Opcode::AArch64_LDRSBWroX: {  // ldrsb wt, [xn, xm{, extend
@@ -3740,8 +5408,8 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_LDRSWpost: {  // ldrsw xt, [xn], #simm
         // LOAD
-        results_[0] = static_cast<int64_t>(memoryData_[0].get<int32_t>());
-        results_[1] =
+        results_[1] = static_cast<int64_t>(memoryData_[0].get<int32_t>());
+        results_[0] =
             sourceValues_[0].get<uint64_t>() + metadata_.operands[2].imm;
         break;
       }
@@ -3831,6 +5499,31 @@ void Instruction::execute() {
         memoryData_[0] = RegisterValue(
             memoryData_[0].get<uint32_t>() | sourceValues_[0].get<uint32_t>(),
             4);
+        break;
+      }
+      case Opcode::AArch64_LDR_ZA: {  // ldr za[wv, #imm], [<xn|sp>{, #imm, mul
+                                      // vl}]
+        // SME, LOAD
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t rowCount = VL_bits / 8;
+        const uint32_t wn = sourceValues_[rowCount].get<uint32_t>();
+        const uint32_t sliceNum =
+            wn +
+            static_cast<uint32_t>(metadata_.operands[0].sme.slice_offset.imm);
+
+        const uint8_t* data = memoryData_[0].getAsVector<uint8_t>();
+        uint8_t out[256] = {0};
+        for (uint16_t i = 0; i < rowCount; i++) {
+          out[i] = data[i];
+        }
+
+        for (uint16_t row = 0; row < rowCount; row++) {
+          results_[row] = (row == sliceNum)
+                              ? RegisterValue(out, 256)
+                              : results_[row] = sourceValues_[row];
+        }
         break;
       }
       case Opcode::AArch64_LDTRSBXi: {  // ldtrsb xt, [xn, #imm]
@@ -3933,6 +5626,65 @@ void Instruction::execute() {
         results_[0] = sveMlaPredicated_vecs<uint32_t>(sourceValues_, VL_bits);
         break;
       }
+      case Opcode::AArch64_MOVA_4ZMXI_H_B: {  // mova {zd1.b - zd4.b},
+                                              // za0h.b[ws, offs1:offs4]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t sliceCount = VL_bits / 8;
+
+        const uint32_t ws = sourceValues_[sliceCount].get<uint32_t>();
+        const uint8_t offs1 =
+            metadata_.operands[4].sme.slice_offset.imm_range.first;
+        const uint8_t offs4 =
+            metadata_.operands[4].sme.slice_offset.imm_range.offset;
+
+        for (uint8_t i = offs1; i <= offs4; i++) {
+          const uint8_t index = i - offs1;
+          results_[index] = sourceValues_[(ws + i) % sliceCount];
+        }
+        break;
+      }
+      case Opcode::AArch64_MOVA_VG2_2ZMXI: {  // mova {zd1.d, zd2.d}, za.d[wv,
+                                              // offs, vgx2]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        // Get ZA stride between halves and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 2;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[2].sme.slice_offset.imm) %
+                                 zaStride;
+
+        results_[0] = sourceValues_[zaIndex];
+        results_[1] = sourceValues_[zaStride + zaIndex];
+        break;
+      }
+      case Opcode::AArch64_MOVA_VG4_4ZMXI: {  // mova {zd1.d - zd4.d}, za.d[wv,
+                                              // offs, vgx4]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[4].sme.slice_offset.imm) %
+                                 zaStride;
+
+        results_[0] = sourceValues_[zaIndex];
+        results_[1] = sourceValues_[zaStride + zaIndex];
+        results_[2] = sourceValues_[(2 * zaStride) + zaIndex];
+        results_[3] = sourceValues_[(3 * zaStride) + zaIndex];
+        break;
+      }
       case Opcode::AArch64_MOVID: {  // movi dd, #imm
         results_[0] = {static_cast<uint64_t>(metadata_.operands[1].imm), 256};
         break;
@@ -4015,8 +5767,7 @@ void Instruction::execute() {
       case Opcode::AArch64_MSR: {  // msr (systemreg|Sop0_op1_Cn_Cm_op2), xt
         // Handle case where SVCR is being updated as this invokes additional
         // functionality
-        if (metadata_.operands[0].reg ==
-            static_cast<arm64_reg>(ARM64_SYSREG_SVCR)) {
+        if (metadata_.operands[0].sysop.reg.sysreg == AARCH64_SYSREG_SVCR) {
           return SMZAupdated();
         } else {
           results_[0] = sourceValues_[0];
@@ -4034,16 +5785,16 @@ void Instruction::execute() {
       case Opcode::AArch64_MSRpstatesvcrImm1: {  // msr svcr<sm|za|smza>, #imm
         // This instruction is always used by SMSTART and SMSTOP aliases.
         const uint64_t svcrBits =
-            static_cast<uint64_t>(metadata_.operands[0].svcr);
+            static_cast<uint64_t>(metadata_.operands[0].sysop.alias.svcr);
 
         // Changing value of SM or ZA bits in SVCR zeros out vector, predicate,
         // and ZA registers. Raise an exception to do this.
         switch (svcrBits) {
-          case ARM64_SVCR_SVCRSM:
+          case AARCH64_SVCR_SVCRSM:
             return streamingModeUpdated();
-          case ARM64_SVCR_SVCRZA:
+          case AARCH64_SVCR_SVCRZA:
             return zaRegisterStatusUpdated();
-          case ARM64_SVCR_SVCRSMZA:
+          case AARCH64_SVCR_SVCRSMZA:
             return SMZAupdated();
           default:
             // Invalid instruction
@@ -4116,6 +5867,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOpShift_3ops<uint32_t>(
             sourceValues_, metadata_, false,
             [](uint32_t x, uint32_t y) -> uint32_t { return x | (~y); });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -4123,6 +5875,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOpShift_3ops<uint64_t>(
             sourceValues_, metadata_, false,
             [](uint64_t x, uint64_t y) -> uint64_t { return x | (~y); });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -4130,6 +5883,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOp_imm<uint32_t>(
             sourceValues_, metadata_, false,
             [](uint32_t x, uint32_t y) -> uint32_t { return x | y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -4141,6 +5895,7 @@ void Instruction::execute() {
         auto [result, nzcv] = logicOp_imm<uint64_t>(
             sourceValues_, metadata_, false,
             [](uint64_t x, uint64_t y) -> uint64_t { return x | y; });
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
@@ -4170,8 +5925,12 @@ void Instruction::execute() {
             [](uint8_t x, uint8_t y) -> uint8_t { return x | y; });
         break;
       }
-      case Opcode::AArch64_PACIASP: {  // paciasp xd, sp
-        // Pointer Authentication not supported, do nothing
+      case Opcode::AArch64_AUTIASP:  // autiasp
+        [[fallthrough]];
+      case Opcode::AArch64_PACIASP: {  // paciasp
+        const uint64_t x30 = sourceValues_[0].get<uint64_t>();
+        // Mimic execution by writing leaving x30 unmodified
+        results_[0] = {x30, 8};
         break;
       }
       case Opcode::AArch64_PFALSE: {  // pfalse pd.b
@@ -4227,6 +5986,22 @@ void Instruction::execute() {
         results_[0] = svePtrue<uint32_t>(metadata_, VL_bits);
         break;
       }
+      case Opcode::AArch64_PTRUE_C_B: {  // ptrue pnd.b
+        results_[0] = svePtrue_counter<uint8_t>(VL_bits);
+        break;
+      }
+      case Opcode::AArch64_PTRUE_C_D: {  // ptrue pnd.d
+        results_[0] = svePtrue_counter<uint64_t>(VL_bits);
+        break;
+      }
+      case Opcode::AArch64_PTRUE_C_H: {  // ptrue pnd.h
+        results_[0] = svePtrue_counter<uint16_t>(VL_bits);
+        break;
+      }
+      case Opcode::AArch64_PTRUE_C_S: {  // ptrue pnd.s
+        results_[0] = svePtrue_counter<uint32_t>(VL_bits);
+        break;
+      }
       case Opcode::AArch64_PUNPKHI_PP: {  // punpkhi pd.h, pn.b
         results_[0] = svePunpk(sourceValues_, VL_bits, true);
         break;
@@ -4243,9 +6018,18 @@ void Instruction::execute() {
         results_[0] = rbit<uint64_t>(sourceValues_, metadata_);
         break;
       }
+      case Opcode::AArch64_RDSVLI_XI: {  // rdsvl xd, #imm
+        // Uses Streaming SVE vector register size, regardless of streaming mode
+        // state
+        int64_t imm = metadata_.operands[1].imm;
+        results_[0] = imm * static_cast<int64_t>(
+                                architecture_.getStreamingVectorLength() / 8);
+        break;
+      }
       case Opcode::AArch64_RDVLI_XI: {  // rdvl xd, #imm
-        int8_t imm = static_cast<int8_t>(metadata_.operands[1].imm);
-        results_[0] = (uint64_t)(imm * (VL_bits / 8));
+        // Uses current vector register size
+        int64_t imm = metadata_.operands[1].imm;
+        results_[0] = imm * static_cast<int64_t>(VL_bits / 8);
         break;
       }
       case Opcode::AArch64_RET: {  // ret {xr}
@@ -4505,6 +6289,158 @@ void Instruction::execute() {
             [](int32_t x, int32_t y) -> int32_t { return std::min(x, y); });
         break;
       }
+      case Opcode::AArch64_SMOPA_MPPZZ_D: {  // smopa zada.d, pn/m, pm/m, zn.h,
+                                             // zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int16_t* zn = sourceValues_[tileDim + 2].getAsVector<int16_t>();
+        const int16_t* zm = sourceValues_[tileDim + 3].getAsVector<int16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          int64_t outRow[32] = {0};
+          const int64_t* zadaRow = sourceValues_[row].getAsVector<int64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum += (static_cast<int64_t>(zn[znIndex]) *
+                        static_cast<int64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_SMOPA_MPPZZ_S: {  // smopa zada.s, pn/m, pm/m, zn.b,
+                                             // zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int8_t* zn = sourceValues_[tileDim + 2].getAsVector<int8_t>();
+        const int8_t* zm = sourceValues_[tileDim + 3].getAsVector<int8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          int32_t outRow[64] = {0};
+          const int32_t* zadaRow = sourceValues_[row].getAsVector<int32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum += (static_cast<int32_t>(zn[znIndex]) *
+                        static_cast<int32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_SMOPS_MPPZZ_D: {  // smops zada.d, pn/m, pm/m, zn.h,
+                                             // zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int16_t* zn = sourceValues_[tileDim + 2].getAsVector<int16_t>();
+        const int16_t* zm = sourceValues_[tileDim + 3].getAsVector<int16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          int64_t outRow[32] = {0};
+          const int64_t* zadaRow = sourceValues_[row].getAsVector<int64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum -= (static_cast<int64_t>(zn[znIndex]) *
+                        static_cast<int64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_SMOPS_MPPZZ_S: {  // smops zada.s, pn/m, pm/m, zn.b,
+                                             // zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int8_t* zn = sourceValues_[tileDim + 2].getAsVector<int8_t>();
+        const int8_t* zm = sourceValues_[tileDim + 3].getAsVector<int8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          int32_t outRow[64] = {0};
+          const int32_t* zadaRow = sourceValues_[row].getAsVector<int32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum -= (static_cast<int32_t>(zn[znIndex]) *
+                        static_cast<int32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
       case Opcode::AArch64_SMSUBLrrr: {  // smsubl xd, wn, wm, xa
         results_[0] = msubl_4ops<int64_t, int32_t>(sourceValues_);
         break;
@@ -4553,7 +6489,7 @@ void Instruction::execute() {
         results_[0] = vecSshrShift_imm<int32_t, 4>(sourceValues_, metadata_);
         break;
       }
-      case Opcode::AArch64_SST1B_D_REAL: {  // st1b {zd.d}, pg, [xn, zm.d]
+      case Opcode::AArch64_SST1B_D: {  // st1b {zd.d}, pg, [xn, zm.d]
         // STORE
         const uint64_t* d = sourceValues_[0].getAsVector<uint64_t>();
         const uint64_t* p = sourceValues_[1].getAsVector<uint64_t>();
@@ -4569,7 +6505,7 @@ void Instruction::execute() {
         }
         break;
       }
-      case Opcode::AArch64_SST1D_REAL: {  // st1d {zt.d}, pg, [xn, zm.d]
+      case Opcode::AArch64_SST1D: {  // st1d {zt.d}, pg, [xn, zm.d]
         // STORE
         const uint64_t* d = sourceValues_[0].getAsVector<uint64_t>();
         const uint64_t* p = sourceValues_[1].getAsVector<uint64_t>();
@@ -4601,9 +6537,8 @@ void Instruction::execute() {
         }
         break;
       }
-      case Opcode::AArch64_SST1D_SCALED_SCALED_REAL: {  // st1d {zt.d}, pg, [xn,
-                                                        // zm.d, lsl #
-                                                        // 3]
+      case Opcode::AArch64_SST1D_SCALED: {  // st1d {zt.d}, pg, [xn,
+                                            // zm.d, lsl #3]
         // STORE
         const uint64_t* d = sourceValues_[0].getAsVector<uint64_t>();
         const uint64_t* p = sourceValues_[1].getAsVector<uint64_t>();
@@ -4619,10 +6554,29 @@ void Instruction::execute() {
         }
         break;
       }
+      case Opcode::AArch64_ST1_MXIPXX_H_B: {  // st1b {zath.b[ws, #imm]}, pg,
+                                              // [<xn|sp>{, xm}]
+        // SME, STORE
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 8;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+
+        const uint8_t* tileSlice =
+            sourceValues_[sliceNum].getAsVector<uint8_t>();
+        memoryData_ = sve_merge_store_data<uint8_t>(tileSlice, pg, VL_bits);
+        break;
+      }
       case Opcode::AArch64_ST1_MXIPXX_H_D: {  // st1d {zath.d[ws, #imm]}, pg,
                                               // [<xn|sp>{, xm, lsl #3}]
         // SME, STORE
-        // Not in right context mode. Raise exception
+        // If not in right context mode, raise exception
         if (!ZAenabled) return ZAdisabled();
 
         const uint16_t partition_num = VL_bits / 64;
@@ -4631,12 +6585,128 @@ void Instruction::execute() {
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
 
         const uint64_t* tileSlice =
             sourceValues_[sliceNum].getAsVector<uint64_t>();
         memoryData_ = sve_merge_store_data<uint64_t>(tileSlice, pg, VL_bits);
+        break;
+      }
+      case Opcode::AArch64_ST1_MXIPXX_H_H: {  // st1h {zath.h[ws, #imm]}, pg,
+                                              // [<xn|sp>{, xm, lsl #1}]
+        // SME, STORE
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
 
+        const uint16_t partition_num = VL_bits / 16;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+
+        const uint16_t* tileSlice =
+            sourceValues_[sliceNum].getAsVector<uint16_t>();
+        memoryData_ = sve_merge_store_data<uint16_t>(tileSlice, pg, VL_bits);
+        break;
+      }
+      case Opcode::AArch64_ST1_MXIPXX_H_Q: {  // st1q {zath.q[ws]}, pg,
+                                              // [<xn|sp>{, xm, lsl #4}]
+        // SME, STORE
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 128;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum = ws % partition_num;
+
+        // Using uint64_t as no 128-bit type
+        const uint64_t* tileSlice =
+            sourceValues_[sliceNum].getAsVector<uint64_t>();
+
+        // Need to combine active adjacent elements into RegisterValues and
+        // place into each memoryData_ index.
+        int index = 0;
+        std::vector<uint64_t> memData;
+        for (uint16_t i = 0; i < partition_num; i++) {
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((i % 4) * 16);
+          if (pg[i / 4] & shifted_active) {
+            // As using uint64_t need to push_back 2 elements
+            memData.push_back(tileSlice[2 * i]);
+            memData.push_back(tileSlice[2 * i + 1]);
+          } else if (memData.size() > 0) {
+            // Predicate false, save current data
+            memoryData_[index] = RegisterValue(
+                (char*)memData.data(), memData.size() * sizeof(uint64_t));
+            index++;
+            memData.clear();
+          }
+        }
+        // Check if final data needs putting into memoryData_
+        if (memData.size() > 0) {
+          memoryData_[index] = RegisterValue((char*)memData.data(),
+                                             memData.size() * sizeof(uint64_t));
+        }
+        break;
+      }
+      case Opcode::AArch64_ST1_MXIPXX_H_S: {  // st1w {zath.s[ws, #imm]}, pg,
+                                              // [<xn|sp>{, xm, lsl #2}]
+        // SME, STORE
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 32;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+
+        const uint32_t* tileSlice =
+            sourceValues_[sliceNum].getAsVector<uint32_t>();
+        memoryData_ = sve_merge_store_data<uint32_t>(tileSlice, pg, VL_bits);
+        break;
+      }
+      case Opcode::AArch64_ST1_MXIPXX_V_B: {  // st1b {zatv.b[ws, #imm]}, pg,
+                                              // [<xn|sp>{, xm}]
+        // SME, STORE
+        // Not in right context mode. Raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 8;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum =
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
+
+        std::vector<uint8_t> memData;
+        uint16_t index = 0;
+
+        for (uint16_t x = 0; x < partition_num; x++) {
+          uint64_t shifted_active = 1ull << (x % 64);
+          if (pg[x / 64] & shifted_active) {
+            memData.push_back(
+                sourceValues_[x].getAsVector<uint8_t>()[sliceNum]);
+          } else if (memData.size() > 0) {
+            memoryData_[index] =
+                RegisterValue((char*)memData.data(), memData.size());
+            index++;
+            memData.clear();
+          }
+        }
+
+        if (memData.size() > 0) {
+          memoryData_[index] =
+              RegisterValue((char*)memData.data(), memData.size());
+        }
         break;
       }
       case Opcode::AArch64_ST1_MXIPXX_V_D: {  // st1d {zatv.d[ws, #imm]}, pg,
@@ -4651,47 +6721,106 @@ void Instruction::execute() {
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
 
-        std::array<uint64_t, 32> mdata;
-        uint16_t md_size = 0;
+        std::vector<uint64_t> memData;
         uint16_t index = 0;
 
         for (uint16_t x = 0; x < partition_num; x++) {
           uint64_t shifted_active = 1ull << ((x % 8) * 8);
           if (pg[x / 8] & shifted_active) {
-            mdata[md_size] = sourceValues_[x].getAsVector<uint64_t>()[sliceNum];
-            md_size++;
-          } else if (md_size) {
+            memData.push_back(
+                sourceValues_[x].getAsVector<uint64_t>()[sliceNum]);
+          } else if (memData.size() > 0) {
             memoryData_[index] =
-                RegisterValue((char*)mdata.data(), md_size * 8);
-            md_size = 0;
+                RegisterValue((char*)memData.data(), memData.size() * 8);
+            index++;
+            memData.clear();
           }
         }
 
-        if (md_size) {
-          memoryData_[index] = RegisterValue((char*)mdata.data(), md_size * 8);
+        if (memData.size() > 0) {
+          memoryData_[index] =
+              RegisterValue((char*)memData.data(), memData.size() * 8);
         }
         break;
       }
-      case Opcode::AArch64_ST1_MXIPXX_H_S: {  // st1w {zath.s[ws, #imm]}, pg,
-                                              // [<xn|sp>{, xm, LSL #2}]
+      case Opcode::AArch64_ST1_MXIPXX_V_H: {  // st1h {zatv.h[ws, #imm]}, pg,
+                                              // [<xn|sp>{, xm, LSL #1}]
         // SME, STORE
         // Not in right context mode. Raise exception
         if (!ZAenabled) return ZAdisabled();
 
-        const uint16_t partition_num = VL_bits / 32;
+        const uint16_t partition_num = VL_bits / 16;
         const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
         const uint64_t* pg =
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
 
-        const uint32_t* tileSlice =
-            sourceValues_[sliceNum].getAsVector<uint32_t>();
-        memoryData_ = sve_merge_store_data<uint32_t>(tileSlice, pg, VL_bits);
+        std::vector<uint16_t> memData;
+        uint16_t index = 0;
 
+        for (uint16_t x = 0; x < partition_num; x++) {
+          uint64_t shifted_active = 1ull << ((x % 32) * 2);
+          if (pg[x / 32] & shifted_active) {
+            memData.push_back(
+                sourceValues_[x].getAsVector<uint16_t>()[sliceNum]);
+          } else if (memData.size() > 0) {
+            memoryData_[index] =
+                RegisterValue((char*)memData.data(), memData.size() * 2);
+            index++;
+            memData.clear();
+          }
+        }
+
+        if (memData.size() > 0) {
+          memoryData_[index] =
+              RegisterValue((char*)memData.data(), memData.size() * 2);
+        }
+        break;
+      }
+      case Opcode::AArch64_ST1_MXIPXX_V_Q: {  // st1h {zatv.q[ws]}, pg,
+                                              // [<xn|sp>{, xm, LSL #4}]
+        // SME, STORE
+        // Not in right context mode. Raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t partition_num = VL_bits / 128;
+        const uint32_t ws = sourceValues_[partition_num].get<uint32_t>();
+        const uint64_t* pg =
+            sourceValues_[partition_num + 1].getAsVector<uint64_t>();
+
+        const uint32_t sliceNum = ws % partition_num;
+
+        // Need to combine active adjacent elements into RegisterValues and
+        // place into each memoryData_ index.
+        std::vector<uint64_t> memData;
+        uint16_t index = 0;
+        for (uint16_t x = 0; x < partition_num; x++) {
+          // For 128-bit there are 16-bit for each active element
+          uint64_t shifted_active = 1ull << ((x % 4) * 16);
+          if (pg[x / 4] & shifted_active) {
+            // As using uint64_t need to push_back 2 elements
+            memData.push_back(
+                sourceValues_[x].getAsVector<uint64_t>()[2 * sliceNum]);
+            memData.push_back(
+                sourceValues_[x].getAsVector<uint64_t>()[2 * sliceNum + 1]);
+          } else if (memData.size() > 0) {
+            // Predicate false, save current data
+            memoryData_[index] = RegisterValue(
+                (char*)memData.data(), memData.size() * sizeof(uint64_t));
+            index++;
+            memData.clear();
+          }
+        }
+
+        // Check if final data needs putting into memoryData_
+        if (memData.size() > 0) {
+          memoryData_[index] = RegisterValue((char*)memData.data(),
+                                             memData.size() * sizeof(uint64_t));
+        }
         break;
       }
       case Opcode::AArch64_ST1_MXIPXX_V_S: {  // st1w {zatv.s[ws, #imm]}, pg,
@@ -4706,28 +6835,28 @@ void Instruction::execute() {
             sourceValues_[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata_.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata_.operands[0].sme.slice_offset.imm) % partition_num;
 
-        std::array<uint32_t, 64> mdata;
-        uint16_t md_size = 0;
+        std::vector<uint32_t> memData;
         uint16_t index = 0;
 
         for (uint16_t x = 0; x < partition_num; x++) {
           uint64_t shifted_active = 1ull << ((x % 16) * 4);
           if (pg[x / 16] & shifted_active) {
-            mdata[md_size] = sourceValues_[x].getAsVector<uint32_t>()[sliceNum];
-            md_size++;
-          } else if (md_size) {
+            memData.push_back(
+                sourceValues_[x].getAsVector<uint32_t>()[sliceNum]);
+          } else if (memData.size() > 0) {
             memoryData_[index] =
-                RegisterValue((char*)mdata.data(), md_size * 4);
-            md_size = 0;
+                RegisterValue((char*)memData.data(), memData.size() * 4);
+            index++;
+            memData.clear();
           }
         }
 
-        if (md_size) {
-          memoryData_[index] = RegisterValue((char*)mdata.data(), md_size * 4);
+        if (memData.size() > 0) {
+          memoryData_[index] =
+              RegisterValue((char*)memData.data(), memData.size() * 4);
         }
-
         break;
       }
       case Opcode::AArch64_SST1W_D_IMM: {  // st1w {zt.d}, pg, [zn.d{, #imm}]
@@ -4794,6 +6923,50 @@ void Instruction::execute() {
         memoryData_ = sve_merge_store_data<uint64_t>(d, p, VL_bits);
         break;
       }
+      case Opcode::AArch64_ST1D_2Z:  // st1d {zt1.d, zt2.d}, png, [xn, xm, lsl
+                                     // #3]
+        // STORE
+        [[fallthrough]];
+      case Opcode::AArch64_ST1D_2Z_IMM: {  // st1d {zt1.d, zt2.d}, png, [xn{,
+                                           // #imm, mul vl}]
+        // STORE
+        const uint64_t* t1 = sourceValues_[0].getAsVector<uint64_t>();
+        const uint64_t* t2 = sourceValues_[1].getAsVector<uint64_t>();
+        const uint64_t pn = sourceValues_[2].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint64_t, 2>(pn, VL_bits);
+
+        memoryData_ =
+            sve_merge_store_data<uint64_t>(t1, preds[0].data(), VL_bits);
+        std::vector<RegisterValue> out2 =
+            sve_merge_store_data<uint64_t>(t2, preds[1].data(), VL_bits);
+        memoryData_.insert(memoryData_.end(), out2.begin(), out2.end());
+        break;
+      }
+      case Opcode::AArch64_ST1D_4Z_IMM: {  // st1d {zt1.d - zt4.d}, png, [xn{,
+                                           // #imm, mul vl}]
+        // STORE
+        const uint64_t* t1 = sourceValues_[0].getAsVector<uint64_t>();
+        const uint64_t* t2 = sourceValues_[1].getAsVector<uint64_t>();
+        const uint64_t* t3 = sourceValues_[2].getAsVector<uint64_t>();
+        const uint64_t* t4 = sourceValues_[3].getAsVector<uint64_t>();
+        const uint64_t pn = sourceValues_[4].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint64_t, 4>(pn, VL_bits);
+
+        memoryData_ =
+            sve_merge_store_data<uint64_t>(t1, preds[0].data(), VL_bits);
+        std::vector<RegisterValue> out2 =
+            sve_merge_store_data<uint64_t>(t2, preds[1].data(), VL_bits);
+        std::vector<RegisterValue> out3 =
+            sve_merge_store_data<uint64_t>(t3, preds[2].data(), VL_bits);
+        std::vector<RegisterValue> out4 =
+            sve_merge_store_data<uint64_t>(t4, preds[3].data(), VL_bits);
+        memoryData_.insert(memoryData_.end(), out2.begin(), out2.end());
+        memoryData_.insert(memoryData_.end(), out3.begin(), out3.end());
+        memoryData_.insert(memoryData_.end(), out4.begin(), out4.end());
+        break;
+      }
       case Opcode::AArch64_ST1Fourv16b: {  // st1 {vt.16b, vt2.16b, vt3.16b,
                                            // vt4.16b}, [xn|sp]
         // STORE
@@ -4814,9 +6987,10 @@ void Instruction::execute() {
                             16 * sizeof(uint8_t));
         }
         // if #imm post-index, value can only be 64
-        const uint64_t postIndex = (metadata_.operands[5].type == ARM64_OP_REG)
-                                       ? sourceValues_[5].get<uint64_t>()
-                                       : 64;
+        const uint64_t postIndex =
+            (metadata_.operands[5].type == AARCH64_OP_REG)
+                ? sourceValues_[5].get<uint64_t>()
+                : 64;
         results_[0] = sourceValues_[4].get<uint64_t>() + postIndex;
         break;
       }
@@ -4839,9 +7013,10 @@ void Instruction::execute() {
                             2 * sizeof(uint64_t));
         }
         // if #imm post-index, value can only be 64
-        const uint64_t postIndex = (metadata_.operands[5].type == ARM64_OP_REG)
-                                       ? sourceValues_[5].get<uint64_t>()
-                                       : 64;
+        const uint64_t postIndex =
+            (metadata_.operands[5].type == AARCH64_OP_REG)
+                ? sourceValues_[5].get<uint64_t>()
+                : 64;
         results_[0] = sourceValues_[4].get<uint64_t>() + postIndex;
         break;
       }
@@ -4854,9 +7029,10 @@ void Instruction::execute() {
                             2 * sizeof(uint32_t));
         }
         // if #imm post-index, value can only be 32
-        const uint64_t postIndex = (metadata_.operands[5].type == ARM64_OP_REG)
-                                       ? sourceValues_[5].get<uint64_t>()
-                                       : 32;
+        const uint64_t postIndex =
+            (metadata_.operands[5].type == AARCH64_OP_REG)
+                ? sourceValues_[5].get<uint64_t>()
+                : 32;
         results_[0] = sourceValues_[4].get<uint64_t>() + postIndex;
         break;
       }
@@ -4879,10 +7055,24 @@ void Instruction::execute() {
                             4 * sizeof(uint32_t));
         }
         // if #imm post-index, value can only be 64
-        const uint64_t postIndex = (metadata_.operands[5].type == ARM64_OP_REG)
-                                       ? sourceValues_[5].get<uint64_t>()
-                                       : 64;
+        const uint64_t postIndex =
+            (metadata_.operands[5].type == AARCH64_OP_REG)
+                ? sourceValues_[5].get<uint64_t>()
+                : 64;
         results_[0] = sourceValues_[4].get<uint64_t>() + postIndex;
+        break;
+      }
+      case Opcode::AArch64_ST1Onev4s_POST: {  // st1 {vt.4s}, [xn|sp], <#imm|xm>
+        // STORE
+        const uint32_t* vt = sourceValues_[0].getAsVector<uint32_t>();
+        memoryData_[0] = RegisterValue((char*)vt, 4 * sizeof(uint32_t));
+
+        // if #imm post-index, value can only be 16
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[2].get<uint64_t>()
+                : 16;
+        results_[0] = sourceValues_[1].get<uint64_t>() + postIndex;
         break;
       }
       case Opcode::AArch64_ST1Twov16b: {  // st1 {vt.16b, vt2.16b}, [xn|sp]
@@ -4902,9 +7092,10 @@ void Instruction::execute() {
         memoryData_[1] = RegisterValue((char*)t2, 16 * sizeof(uint8_t));
 
         // if #imm post-index, value can only be 32
-        const uint64_t postIndex = (metadata_.operands[3].type == ARM64_OP_REG)
-                                       ? sourceValues_[3].get<uint64_t>()
-                                       : 32;
+        const uint64_t postIndex =
+            (metadata_.operands[3].type == AARCH64_OP_REG)
+                ? sourceValues_[3].get<uint64_t>()
+                : 32;
         results_[0] = sourceValues_[2].get<uint64_t>() + postIndex;
         break;
       }
@@ -4925,9 +7116,10 @@ void Instruction::execute() {
         memoryData_[1] = RegisterValue((char*)t2, 2 * sizeof(uint64_t));
 
         // if #imm post-index, value can only be 32
-        const uint64_t postIndex = (metadata_.operands[3].type == ARM64_OP_REG)
-                                       ? sourceValues_[3].get<uint64_t>()
-                                       : 32;
+        const uint64_t postIndex =
+            (metadata_.operands[3].type == AARCH64_OP_REG)
+                ? sourceValues_[3].get<uint64_t>()
+                : 32;
         results_[0] = sourceValues_[2].get<uint64_t>() + postIndex;
         break;
       }
@@ -4948,9 +7140,10 @@ void Instruction::execute() {
         memoryData_[1] = RegisterValue((char*)t2, 4 * sizeof(uint32_t));
 
         // if #imm post-index, value can only be 32
-        const uint64_t postIndex = (metadata_.operands[3].type == ARM64_OP_REG)
-                                       ? sourceValues_[3].get<uint64_t>()
-                                       : 32;
+        const uint64_t postIndex =
+            (metadata_.operands[3].type == AARCH64_OP_REG)
+                ? sourceValues_[3].get<uint64_t>()
+                : 32;
         results_[0] = sourceValues_[2].get<uint64_t>() + postIndex;
         break;
       }
@@ -4978,22 +7171,66 @@ void Instruction::execute() {
         memoryData_ = sve_merge_store_data<uint32_t>(d, p, VL_bits);
         break;
       }
+      case Opcode::AArch64_ST1W_2Z:  // st1w {zt1.s, zt2.s}, png, [xn, xm, lsl
+                                     // #2]
+        // STORE
+        [[fallthrough]];
+      case Opcode::AArch64_ST1W_2Z_IMM: {  // st1w {zt1.s, zt2.s}, png, [xn{,
+                                           // #imm, mul vl}]
+        // STORE
+        const uint32_t* t1 = sourceValues_[0].getAsVector<uint32_t>();
+        const uint32_t* t2 = sourceValues_[1].getAsVector<uint32_t>();
+        const uint64_t pn = sourceValues_[2].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint32_t, 2>(pn, VL_bits);
+
+        memoryData_ =
+            sve_merge_store_data<uint32_t>(t1, preds[0].data(), VL_bits);
+        std::vector<RegisterValue> out2 =
+            sve_merge_store_data<uint32_t>(t2, preds[1].data(), VL_bits);
+        memoryData_.insert(memoryData_.end(), out2.begin(), out2.end());
+        break;
+      }
+      case Opcode::AArch64_ST1W_4Z_IMM: {  // st1w {zt1.s - zt4.s}, png, [xn{,
+                                           // #imm, mul vl}]
+        // STORE
+        const uint32_t* t1 = sourceValues_[0].getAsVector<uint32_t>();
+        const uint32_t* t2 = sourceValues_[1].getAsVector<uint32_t>();
+        const uint32_t* t3 = sourceValues_[2].getAsVector<uint32_t>();
+        const uint32_t* t4 = sourceValues_[3].getAsVector<uint32_t>();
+        const uint64_t pn = sourceValues_[4].get<uint64_t>();
+
+        auto preds = predAsCounterToMasks<uint32_t, 4>(pn, VL_bits);
+
+        memoryData_ =
+            sve_merge_store_data<uint32_t>(t1, preds[0].data(), VL_bits);
+        std::vector<RegisterValue> out2 =
+            sve_merge_store_data<uint32_t>(t2, preds[1].data(), VL_bits);
+        std::vector<RegisterValue> out3 =
+            sve_merge_store_data<uint32_t>(t3, preds[2].data(), VL_bits);
+        std::vector<RegisterValue> out4 =
+            sve_merge_store_data<uint32_t>(t4, preds[3].data(), VL_bits);
+        memoryData_.insert(memoryData_.end(), out2.begin(), out2.end());
+        memoryData_.insert(memoryData_.end(), out3.begin(), out3.end());
+        memoryData_.insert(memoryData_.end(), out4.begin(), out4.end());
+        break;
+      }
       case Opcode::AArch64_ST1i16: {  // st1 {vt.h}[index], [xn]
         // STORE
         const uint16_t* t = sourceValues_[0].getAsVector<uint16_t>();
         memoryData_[0] = t[metadata_.operands[0].vector_index];
         break;
       }
-      case Opcode::AArch64_ST1i16_POST: {  // st1 {vt.h}[index], [xn], xm
-                                           // st1 {vt.h}[index], [xn], #2
+      case Opcode::AArch64_ST1i16_POST: {  // st1 {vt.h}[index], [xn], <xm|#imm>
         // STORE
         const uint16_t* t = sourceValues_[0].getAsVector<uint16_t>();
         memoryData_[0] = t[metadata_.operands[0].vector_index];
-        uint64_t offset = 2;
-        if (metadata_.operandCount == 3) {
-          offset = sourceValues_[2].get<uint64_t>();
-        }
-        results_[0] = sourceValues_[1].get<uint64_t>() + offset;
+        // if #imm post-index, value can only be 2
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[2].get<uint64_t>()
+                : 2;
+        results_[0] = sourceValues_[1].get<uint64_t>() + postIndex;
         break;
       }
       case Opcode::AArch64_ST1i32: {  // st1 {vt.s}[index], [xn]
@@ -5002,16 +7239,16 @@ void Instruction::execute() {
         memoryData_[0] = t[metadata_.operands[0].vector_index];
         break;
       }
-      case Opcode::AArch64_ST1i32_POST: {  // st1 {vt.s}[index], [xn], xm
-                                           // st1 {vt.s}[index], [xn], #4
+      case Opcode::AArch64_ST1i32_POST: {  // st1 {vt.s}[index], [xn], <xm|#imm>
         // STORE
         const uint32_t* t = sourceValues_[0].getAsVector<uint32_t>();
         memoryData_[0] = t[metadata_.operands[0].vector_index];
-        uint64_t offset = 4;
-        if (metadata_.operandCount == 3) {
-          offset = sourceValues_[2].get<uint64_t>();
-        }
-        results_[0] = sourceValues_[1].get<uint64_t>() + offset;
+        // if #imm post-index, value can only be 4
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[2].get<uint64_t>()
+                : 4;
+        results_[0] = sourceValues_[1].get<uint64_t>() + postIndex;
         break;
       }
       case Opcode::AArch64_ST1i64: {  // st1 {vt.d}[index], [xn]
@@ -5020,16 +7257,16 @@ void Instruction::execute() {
         memoryData_[0] = t[metadata_.operands[0].vector_index];
         break;
       }
-      case Opcode::AArch64_ST1i64_POST: {  // st1 {vt.d}[index], [xn], xm
-                                           // st1 {vt.d}[index], [xn], #8
+      case Opcode::AArch64_ST1i64_POST: {  // st1 {vt.d}[index], [xn], <xm|#imm>
         // STORE
         const uint64_t* t = sourceValues_[0].getAsVector<uint64_t>();
         memoryData_[0] = t[metadata_.operands[0].vector_index];
-        uint64_t offset = 8;
-        if (metadata_.operandCount == 3) {
-          offset = sourceValues_[2].get<uint64_t>();
-        }
-        results_[0] = sourceValues_[1].get<uint64_t>() + offset;
+        // if #imm post-index, value can only be 8
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[2].get<uint64_t>()
+                : 8;
+        results_[0] = sourceValues_[1].get<uint64_t>() + postIndex;
         break;
       }
       case Opcode::AArch64_ST1i8: {  // st1 {vt.b}[index], [xn]
@@ -5038,17 +7275,16 @@ void Instruction::execute() {
         memoryData_[0] = t[metadata_.operands[0].vector_index];
         break;
       }
-      case Opcode::AArch64_ST1i8_POST: {  // st1 {vt.b}[index], [xn], xm
-                                          // st1 {vt.b}[index], [xn], #1
+      case Opcode::AArch64_ST1i8_POST: {  // st1 {vt.b}[index], [xn], <xm|#imm>
         // STORE
         const uint8_t* t = sourceValues_[0].getAsVector<uint8_t>();
         memoryData_[0] = t[metadata_.operands[0].vector_index];
-        uint64_t offset = 1;
-        if (metadata_.operandCount == 3) {
-          offset = sourceValues_[2].get<uint64_t>();
-        }
-        results_[0] =
-            RegisterValue(sourceValues_[1].get<uint64_t>() + offset, 8);
+        // if #imm post-index, value can only be 1
+        const uint64_t postIndex =
+            (metadata_.operands[2].type == AARCH64_OP_REG)
+                ? sourceValues_[2].get<uint64_t>()
+                : 1;
+        results_[0] = sourceValues_[1].get<uint64_t>() + postIndex;
         break;
       }
       case Opcode::AArch64_ST2D_IMM: {  // st2d {zt1.d, zt2.d}, pg, [<xn|sp>{,
@@ -5058,37 +7294,19 @@ void Instruction::execute() {
         const uint64_t* d2 = sourceValues_[1].getAsVector<uint64_t>();
         const uint64_t* p = sourceValues_[2].getAsVector<uint64_t>();
 
-        std::vector<uint64_t> memData;
-        bool inActiveBlock = false;
-
         const uint16_t partition_num = VL_bits / 64;
         uint16_t index = 0;
         for (int i = 0; i < partition_num; i++) {
           uint64_t shifted_active = 1ull << ((i % 8) * 8);
           if (p[i / 8] & shifted_active) {
-            // If active and not in active block, initialise
-            if (!inActiveBlock) {
-              memData.clear();
-              inActiveBlock = true;
-            }
-            memData.push_back(d1[i]);
-            memData.push_back(d2[i]);
-          } else if (inActiveBlock) {
-            inActiveBlock = false;
-            memoryData_[index] = RegisterValue(
-                (char*)memData.data(), sizeof(uint64_t) * memData.size());
-            index++;
+            memoryData_[index++] = RegisterValue(d1[i], 8);
+            memoryData_[index++] = RegisterValue(d2[i], 8);
           }
         }
-        // Add final block if needed
-        if (inActiveBlock)
-          memoryData_[index] = RegisterValue((char*)memData.data(),
-                                             sizeof(uint64_t) * memData.size());
-
         break;
       }
       case Opcode::AArch64_ST2Twov4s_POST: {  // st2 {vt1.4s, vt2.4s}, [xn],
-                                              // #imm
+                                              // <xm|#imm>
         // STORE
         const float* t1 = sourceValues_[0].getAsVector<float>();
         const float* t2 = sourceValues_[1].getAsVector<float>();
@@ -5096,12 +7314,37 @@ void Instruction::execute() {
         std::vector<float> m2 = {t1[2], t2[2], t1[3], t2[3]};
         memoryData_[0] = RegisterValue((char*)m1.data(), 4 * sizeof(float));
         memoryData_[1] = RegisterValue((char*)m2.data(), 4 * sizeof(float));
+        // if #imm post-index, value can only be 32
+        const uint64_t postIndex =
+            (metadata_.operands[3].type == AARCH64_OP_REG)
+                ? sourceValues_[3].get<uint64_t>()
+                : 32;
+        results_[0] = sourceValues_[2].get<uint64_t>() + postIndex;
+        break;
+      }
+      case Opcode::AArch64_ST4W:  // st4w {zt1.s, zt2.s, zt3.s, zt4.s},
+                                  // pg, [<xn|sp>, xm, lsl #2]
+        [[fallthrough]];
+      case Opcode::AArch64_ST4W_IMM: {  // st4w {zt1.s, zt2.s, zt3.s, zt4.s},
+                                        // pg, [<xn|sp>{, #imm, mul vl}]
+        // STORE
+        const uint32_t* d1 = sourceValues_[0].getAsVector<uint32_t>();
+        const uint32_t* d2 = sourceValues_[1].getAsVector<uint32_t>();
+        const uint32_t* d3 = sourceValues_[2].getAsVector<uint32_t>();
+        const uint32_t* d4 = sourceValues_[3].getAsVector<uint32_t>();
+        const uint64_t* p = sourceValues_[4].getAsVector<uint64_t>();
 
-        uint64_t offset = 32;
-        if (metadata_.operandCount == 4) {
-          offset = sourceValues_[3].get<uint64_t>();
+        const uint16_t partition_num = VL_bits / 32;
+        uint16_t index = 0;
+        for (int i = 0; i < partition_num; i++) {
+          uint64_t shifted_active = 1ull << ((i % 16) * 4);
+          if (p[i / 16] & shifted_active) {
+            memoryData_[index++] = RegisterValue(d1[i], 4);
+            memoryData_[index++] = RegisterValue(d2[i], 4);
+            memoryData_[index++] = RegisterValue(d3[i], 4);
+            memoryData_[index++] = RegisterValue(d4[i], 4);
+          }
         }
-        results_[0] = sourceValues_[2].get<uint64_t>() + offset;
         break;
       }
       case Opcode::AArch64_STLRB: {  // stlrb wt, [xn]
@@ -5305,6 +7548,21 @@ void Instruction::execute() {
         memoryData_[0] = RegisterValue((char*)p, partition_num);
         break;
       }
+      case Opcode::AArch64_STR_ZA: {  // str za[wv, #imm], [xn|sp{, #imm, mul
+                                      // vl}]
+        // SME, STORE
+        // If not in right context mode, raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint32_t wv = sourceValues_[zaRowCount].get<uint32_t>();
+        const uint32_t imm = metadata_.operands[0].sme.slice_offset.imm;
+
+        const uint8_t* zaRow =
+            sourceValues_[(wv + imm) % zaRowCount].getAsVector<uint8_t>();
+        memoryData_[0] = RegisterValue((char*)zaRow, zaRowCount);
+        break;
+      }
       case Opcode::AArch64_STR_ZXI: {  // str zt, [xn{, #imm, mul vl}]
         // STORE
         const uint16_t partition_num = VL_bits / 8;
@@ -5392,24 +7650,28 @@ void Instruction::execute() {
       case Opcode::AArch64_SUBWri: {  // sub wd, wn, #imm{, <shift>}
         auto [result, nzcv] =
             subShift_imm<uint32_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_SUBWrs: {  // sub wd, wn, wm{, shift #amount}
         auto [result, nzcv] =
             subShift_3ops<uint32_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_SUBXri: {  // sub xd, xn, #imm{, <shift>}
         auto [result, nzcv] =
             subShift_imm<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
       case Opcode::AArch64_SUBXrs: {  // sub xd, xn, xm{, shift #amount}
         auto [result, nzcv] =
             subShift_3ops<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -5417,6 +7679,7 @@ void Instruction::execute() {
       case Opcode::AArch64_SUBXrx64: {  // sub xd, xn, xm{, extend #amount}
         auto [result, nzcv] =
             subExtend_3ops<uint64_t>(sourceValues_, metadata_, false);
+        (void)nzcv;  // Prevent unused variable warnings in GCC7
         results_[0] = result;
         break;
       }
@@ -5486,6 +7749,158 @@ void Instruction::execute() {
         results_[0] = vecLogicOp_3vecs<uint8_t, 8>(
             sourceValues_,
             [](uint8_t x, uint8_t y) -> uint8_t { return x - y; });
+        break;
+      }
+      case Opcode::AArch64_SUMOPA_MPPZZ_D: {  // sumopa zada.d, pn/m, pm/m,
+                                              // zn.h, zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int16_t* zn = sourceValues_[tileDim + 2].getAsVector<int16_t>();
+        const uint16_t* zm = sourceValues_[tileDim + 3].getAsVector<uint16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          int64_t outRow[32] = {0};
+          const int64_t* zadaRow = sourceValues_[row].getAsVector<int64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum += (static_cast<int64_t>(zn[znIndex]) *
+                        static_cast<int64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_SUMOPA_MPPZZ_S: {  // sumopa zada.s, pn/m, pm/m,
+                                              // zn.b, zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int8_t* zn = sourceValues_[tileDim + 2].getAsVector<int8_t>();
+        const uint8_t* zm = sourceValues_[tileDim + 3].getAsVector<uint8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          int32_t outRow[64] = {0};
+          const int32_t* zadaRow = sourceValues_[row].getAsVector<int32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum += (static_cast<int32_t>(zn[znIndex]) *
+                        static_cast<int32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_SUMOPS_MPPZZ_D: {  // sumops zada.d, pn/m, pm/m,
+                                              // zn.h, zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int16_t* zn = sourceValues_[tileDim + 2].getAsVector<int16_t>();
+        const uint16_t* zm = sourceValues_[tileDim + 3].getAsVector<uint16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          int64_t outRow[32] = {0};
+          const int64_t* zadaRow = sourceValues_[row].getAsVector<int64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum -= (static_cast<int64_t>(zn[znIndex]) *
+                        static_cast<int64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_SUMOPS_MPPZZ_S: {  // sumops zada.s, pn/m, pm/m,
+                                              // zn.b, zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const int8_t* zn = sourceValues_[tileDim + 2].getAsVector<int8_t>();
+        const uint8_t* zm = sourceValues_[tileDim + 3].getAsVector<uint8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          int32_t outRow[64] = {0};
+          const int32_t* zadaRow = sourceValues_[row].getAsVector<int32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum -= (static_cast<int32_t>(zn[znIndex]) *
+                        static_cast<int32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
         break;
       }
       case Opcode::AArch64_SVC: {  // svc #imm
@@ -5700,6 +8115,11 @@ void Instruction::execute() {
             bfm_2imms<uint64_t>(sourceValues_, metadata_, false, true);
         break;
       }
+      case Opcode::AArch64_UCVTFSXSri: {  // ucvtf sd, xn, #fbits
+        results_[0] = {
+            ucvtf_fixedToFloat<float, uint32_t>(sourceValues_, metadata_), 256};
+        break;
+      }
       case Opcode::AArch64_UCVTFUWDri: {  // ucvtf dd, wn
         results_[0] = {static_cast<double>(sourceValues_[0].get<uint32_t>()),
                        256};
@@ -5738,6 +8158,200 @@ void Instruction::execute() {
         results_[0] = {div_3ops<uint64_t>(sourceValues_), 8};
         break;
       }
+      case Opcode::AArch64_UDOT_VG4_M4Z4Z_BtoS: {  // udot za.s[wv, #off, vgx4],
+                                                   // {zn1.b - zn4.b}, {zm1.b -
+                                                   // zm4.b}
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Get base zn and zm register indexed in sourceValues
+        const uint16_t znBase = zaRowCount + 1;
+        const uint16_t zmBase = zaRowCount + 5;
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const uint32_t* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<uint32_t>();
+          const uint8_t* znr = sourceValues_[znBase + r].getAsVector<uint8_t>();
+          const uint8_t* zmr = sourceValues_[zmBase + r].getAsVector<uint8_t>();
+          uint32_t out[64] = {0};
+          // Loop over all 32-bit elements of output row vector `zaRow`
+          for (int e = 0; e < elemCount; e++) {
+            out[e] = zaRow[e];
+            // There are 4 8-bit elements per 32-bit element of `znr` and `zmr`
+            for (int i = 0; i < 4; i++) {
+              out[e] += static_cast<uint32_t>(znr[4 * e + i]) *
+                        static_cast<uint32_t>(zmr[4 * e + i]);
+            }
+          }
+          // Update results_ for completed row
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_UDOT_VG4_M4ZZI_BtoS: {  // udot za.s[wv, #off, vgx4],
+                                                   // {zn1.b - zn4.b},
+                                                   // zm.b[#index]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+        // Get zm vector and zm's index
+        const uint8_t* zm =
+            sourceValues_[zaRowCount + 5].getAsVector<uint8_t>();
+        const int zmIndex = metadata_.operands[5].vector_index;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const uint32_t* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<uint32_t>();
+          const uint8_t* znr =
+              sourceValues_[zaRowCount + 1 + r].getAsVector<uint8_t>();
+          uint32_t out[64] = {0};
+          // Loop over all 32-bit elements of output row vector `zaRow`
+          for (int e = 0; e < elemCount; e++) {
+            // This instruction destructively adds the widened dot product
+            // (4x 8-bit --> 1x 32-bit) of the following to each 32-bit element
+            // in the current `zaRow`:
+            //    - four 8-bit values in each corresponding 32-bit element of
+            //      the current source `znr` vector
+            //    - four 8-bit values from a 32-bit element of `zm`, selected
+            //      from each 128-bit segment of `zm` using an index
+            //
+            // The 128-bit segment of `zm` currently in use corresponds to the
+            // 128-bit segment that the current 32-bit elements of `znr`
+            // and `zaRow` are within.
+            // For example, with a SVL = 512-bits, elements `e` of `zaRow` in
+            // the range 0->15, and zmIndex = 1:
+            //    - When `e` = 0 -> 3, the 32-bit element used from `zm` will be
+            //                         zm[1] (1st 32-bit element in 0th 128-bit
+            //                         segment)
+            //    - When `e` = 4 -> 7, the 32-bit element used from `zm` will be
+            //                         zm[5] (1st 32-bit element in 1st 128-bit
+            //                         segment)
+            out[e] = zaRow[e];
+            // MOD 4 as there are 4 32-bit elements per 128-bit segment of `zm`
+            const int zmSegBase = e - (e % 4);
+            const int s = zmSegBase + zmIndex;
+            // There are 4 8-bit elements per 32-bit element of `znr` and `zm`
+            for (int i = 0; i < 4; i++) {
+              out[e] += static_cast<uint32_t>(znr[4 * e + i]) *
+                        static_cast<uint32_t>(zm[4 * s + i]);
+            }
+          }
+          // Update results_ for completed row
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_UVDOT_VG4_M4ZZI_BtoS: {  // uvdot za.s[wv, #off,
+                                                    // vgx4], {zn1.b - zn4.b},
+                                                    // zm.b[#index]
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t zaRowCount = VL_bits / 8;
+        const uint16_t elemCount = VL_bits / 32;
+        // Get ZA stride between quarters and index into each ZA quarter
+        const uint16_t zaStride = zaRowCount / 4;
+        const uint32_t zaIndex = (sourceValues_[zaRowCount].get<uint32_t>() +
+                                  metadata_.operands[0].sme.slice_offset.imm) %
+                                 zaStride;
+        // Get zm vector and zm's index
+        const uint8_t* zm =
+            sourceValues_[zaRowCount + 5].getAsVector<uint8_t>();
+        const int zmIndex = metadata_.operands[5].vector_index;
+
+        // Pre-set all ZA result rows as only 4 will be updated in loop below
+        for (int z = 0; z < zaRowCount; z++) {
+          results_[z] = sourceValues_[z];
+        }
+
+        // Loop over each source vector and destination vector (from the za
+        // single-vector group) pair
+        for (int r = 0; r < 4; r++) {
+          // For ZA single-vector groups of 4 vectors (vgx4), each vector is in
+          // a different quarter of ZA; indexed into it by Wv+off.
+          const uint32_t* zaRow =
+              sourceValues_[(r * zaStride) + zaIndex].getAsVector<uint32_t>();
+          uint32_t out[64] = {0};
+          // Loop over all 32-bit elements of output row vector `zaRow`
+          for (int e = 0; e < elemCount; e++) {
+            out[e] = zaRow[e];
+            // MOD 4 as there are 4 32-bit elements per 128-bit segment of `zm`
+            const int zmSegBase = e - (e % 4);
+            const int s = zmSegBase + zmIndex;
+            // There are 4 8-bit elements per 32-bit element of `znr` and `zm`
+            for (int i = 0; i < 4; i++) {
+              const uint8_t* znr =
+                  sourceValues_[zaRowCount + 1 + i].getAsVector<uint8_t>();
+              out[e] += static_cast<uint32_t>(znr[4 * e + r]) *
+                        static_cast<uint32_t>(zm[4 * s + i]);
+            }
+          }
+          // Update results_ for completed row
+          results_[(r * zaStride) + zaIndex] = RegisterValue(out, 256);
+        }
+        break;
+      }
+      case Opcode::AArch64_UDOT_ZZZ_S: {  // udot zd.s, zn.b, zm.b
+        results_[0] =
+            sveUdot<uint32_t, uint8_t, 4>(sourceValues_, metadata_, VL_bits);
+        break;
+      }
+      case Opcode::AArch64_UDOT_ZZZI_S: {  // udot zd.s, zn.b, zm.b[index]
+        results_[0] = sveUdot_indexed<uint32_t, uint8_t, 4>(sourceValues_,
+                                                            metadata_, VL_bits);
+        break;
+      }
+      case Opcode::AArch64_UDOTv16i8: {  // udot vd.4s, vn.16b, vm.16b
+        results_[0] = vecUdot<4>(sourceValues_, metadata_);
+        break;
+      }
+      case Opcode::AArch64_UDOTlanev16i8: {  // udot vd.4s, vn.16b, vm.4b[index]
+        results_[0] = vecUdot_byElement<4>(sourceValues_, metadata_);
+        break;
+      }
+      case Opcode::AArch64_UDOTlanev8i8: {  // udot vd.2s, vn.8b, vm.4b[index]
+        results_[0] = vecUdot_byElement<2>(sourceValues_, metadata_);
+        break;
+      }
       case Opcode::AArch64_UMADDLrrr: {  // umaddl xd, wn, wm, xa
         results_[0] = maddl_4ops<uint64_t, uint32_t>(sourceValues_);
         break;
@@ -5752,6 +8366,184 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_UMINPv16i8: {  // uminp vd.16b, vn.16b, vm.16b
         results_[0] = vecUMinP<uint8_t, 16>(sourceValues_);
+        break;
+      }
+      case Opcode::AArch64_UMLALv2i32_indexed: {  // umlal vd.2d, vn.2s,
+                                                  // vm.s[index]
+        const uint64_t* vd = sourceValues_[0].getAsVector<uint64_t>();
+        const uint32_t* vn = sourceValues_[1].getAsVector<uint32_t>();
+        const uint32_t* vm = sourceValues_[2].getAsVector<uint32_t>();
+        const int64_t index = metadata_.operands[2].vector_index;
+        const uint64_t vm_idx_elem = static_cast<uint64_t>(vm[index]);
+
+        uint64_t out[2] = {vd[0] + static_cast<uint64_t>(vn[0]) * vm_idx_elem,
+                           vd[1] + static_cast<uint64_t>(vn[1]) * vm_idx_elem};
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMLALv4i32_indexed: {  // umlal2 vd.2d, vn.4s,
+                                                  // vm.s[index]
+        const uint64_t* vd = sourceValues_[0].getAsVector<uint64_t>();
+        const uint32_t* vn = sourceValues_[1].getAsVector<uint32_t>();
+        const uint32_t* vm = sourceValues_[2].getAsVector<uint32_t>();
+        const int64_t index = metadata_.operands[2].vector_index;
+        const uint64_t vm_idx_elem = static_cast<uint64_t>(vm[index]);
+
+        uint64_t out[2] = {vd[0] + static_cast<uint64_t>(vn[2]) * vm_idx_elem,
+                           vd[1] + static_cast<uint64_t>(vn[3]) * vm_idx_elem};
+        results_[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMOPA_MPPZZ_D: {  // umopa zada.d, pn/m, pm/m, zn.h,
+                                             // zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint16_t* zn = sourceValues_[tileDim + 2].getAsVector<uint16_t>();
+        const uint16_t* zm = sourceValues_[tileDim + 3].getAsVector<uint16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          uint64_t outRow[32] = {0};
+          const uint64_t* zadaRow = sourceValues_[row].getAsVector<uint64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            uint64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum += (static_cast<uint64_t>(zn[znIndex]) *
+                        static_cast<uint64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_UMOPA_MPPZZ_S: {  // umopa zada.s, pn/m, pm/m, zn.b,
+                                             // zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint8_t* zn = sourceValues_[tileDim + 2].getAsVector<uint8_t>();
+        const uint8_t* zm = sourceValues_[tileDim + 3].getAsVector<uint8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          uint32_t outRow[64] = {0};
+          const uint32_t* zadaRow = sourceValues_[row].getAsVector<uint32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            uint32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum += (static_cast<uint32_t>(zn[znIndex]) *
+                        static_cast<uint32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_UMOPS_MPPZZ_D: {  // umops zada.d, pn/m, pm/m, zn.h,
+                                             // zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint16_t* zn = sourceValues_[tileDim + 2].getAsVector<uint16_t>();
+        const uint16_t* zm = sourceValues_[tileDim + 3].getAsVector<uint16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          uint64_t outRow[32] = {0};
+          const uint64_t* zadaRow = sourceValues_[row].getAsVector<uint64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            uint64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum -= (static_cast<uint64_t>(zn[znIndex]) *
+                        static_cast<uint64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_UMOPS_MPPZZ_S: {  // umops zada.s, pn/m, pm/m, zn.b,
+                                             // zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint8_t* zn = sourceValues_[tileDim + 2].getAsVector<uint8_t>();
+        const uint8_t* zm = sourceValues_[tileDim + 3].getAsVector<uint8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          uint32_t outRow[64] = {0};
+          const uint32_t* zadaRow = sourceValues_[row].getAsVector<uint32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            uint32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum -= (static_cast<uint32_t>(zn[znIndex]) *
+                        static_cast<uint32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
         break;
       }
       case Opcode::AArch64_UMOVvi32_idx0:  // umov wd, vn.s[0]
@@ -5779,6 +8571,17 @@ void Instruction::execute() {
       case Opcode::AArch64_UMULHrr: {  // umulh xd, xn, xm
         results_[0] = mulhi(sourceValues_[0].get<uint64_t>(),
                             sourceValues_[1].get<uint64_t>());
+        break;
+      }
+      case Opcode::AArch64_UMULLv4i16_v4i32: {  // umull vd.4s, vn.4h, vm.4h
+        const uint16_t* vn = sourceValues_[0].getAsVector<uint16_t>();
+        const uint16_t* vm = sourceValues_[1].getAsVector<uint16_t>();
+
+        uint32_t out[4] = {0};
+        for (int i = 0; i < 4; i++) {
+          out[i] = static_cast<uint32_t>(vn[i]) * static_cast<uint32_t>(vm[i]);
+        }
+        results_[0] = {out, 256};
         break;
       }
       case Opcode::AArch64_UQDECD_WPiI: {  // uqdecd wd{, pattern{, MUL #imm}}
@@ -5819,6 +8622,158 @@ void Instruction::execute() {
       case Opcode::AArch64_USHLLv8i8_shift: {  // ushll vd.8h, vn.8b, #imm
         results_[0] = vecShllShift_vecImm<uint16_t, uint8_t, 8>(
             sourceValues_, metadata_, false);
+        break;
+      }
+      case Opcode::AArch64_USMOPA_MPPZZ_D: {  // usmopa zada.d, pn/m, pm/m,
+                                              // zn.h, zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint16_t* zn = sourceValues_[tileDim + 2].getAsVector<uint16_t>();
+        const int16_t* zm = sourceValues_[tileDim + 3].getAsVector<int16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          int64_t outRow[32] = {0};
+          const int64_t* zadaRow = sourceValues_[row].getAsVector<int64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum += (static_cast<int64_t>(zn[znIndex]) *
+                        static_cast<int64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_USMOPA_MPPZZ_S: {  // usmopa zada.s, pn/m, pm/m,
+                                              // zn.b, zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint8_t* zn = sourceValues_[tileDim + 2].getAsVector<uint8_t>();
+        const int8_t* zm = sourceValues_[tileDim + 3].getAsVector<int8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          int32_t outRow[64] = {0};
+          const int32_t* zadaRow = sourceValues_[row].getAsVector<int32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum += (static_cast<int32_t>(zn[znIndex]) *
+                        static_cast<int32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_USMOPS_MPPZZ_D: {  // usmops zada.d, pn/m, pm/m,
+                                              // zn.h, zm.h
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 64;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint16_t* zn = sourceValues_[tileDim + 2].getAsVector<uint16_t>();
+        const int16_t* zm = sourceValues_[tileDim + 3].getAsVector<int16_t>();
+
+        // zn is a SVLd x 4 sub matrix
+        // zm is a 4 x SVLd sub matrix
+        // Resulting SVLd x SVLd matrix has results widened to 64-bit
+        for (int row = 0; row < tileDim; row++) {
+          int64_t outRow[32] = {0};
+          const int64_t* zadaRow = sourceValues_[row].getAsVector<int64_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int64_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << ((znIndex % 32) * 2);
+              const uint64_t shifted_active_zm = 1ull << ((zmIndex % 32) * 2);
+              if ((pn[znIndex / 32] & shifted_active_zn) &&
+                  (pm[zmIndex / 32] & shifted_active_zm))
+                sum -= (static_cast<int64_t>(zn[znIndex]) *
+                        static_cast<int64_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
+        break;
+      }
+      case Opcode::AArch64_USMOPS_MPPZZ_S: {  // usmops zada.s, pn/m, pm/m,
+                                              // zn.b, zm.b
+        // SME
+        // Check core is in correct context mode (check SM first)
+        if (!SMenabled) return SMdisabled();
+        if (!ZAenabled) return ZAdisabled();
+
+        const uint16_t tileDim = VL_bits / 32;
+        const uint64_t* pn = sourceValues_[tileDim].getAsVector<uint64_t>();
+        const uint64_t* pm = sourceValues_[tileDim + 1].getAsVector<uint64_t>();
+        const uint8_t* zn = sourceValues_[tileDim + 2].getAsVector<uint8_t>();
+        const int8_t* zm = sourceValues_[tileDim + 3].getAsVector<int8_t>();
+
+        // zn is a SVLs x 4 sub matrix
+        // zm is a 4 x SVLs sub matrix
+        // Resulting SVLs x SVLs matrix has results widened to 32-bit
+        for (int row = 0; row < tileDim; row++) {
+          int32_t outRow[64] = {0};
+          const int32_t* zadaRow = sourceValues_[row].getAsVector<int32_t>();
+          for (int col = 0; col < tileDim; col++) {
+            // Get corresponding output element
+            int32_t sum = zadaRow[col];
+            for (int k = 0; k < 4; k++) {
+              const uint16_t znIndex = 4 * row + k;
+              const uint16_t zmIndex = 4 * col + k;
+              const uint64_t shifted_active_zn = 1ull << (znIndex % 64);
+              const uint64_t shifted_active_zm = 1ull << (zmIndex % 64);
+              if ((pn[znIndex / 64] & shifted_active_zn) &&
+                  (pm[zmIndex / 64] & shifted_active_zm))
+                sum -= (static_cast<int32_t>(zn[znIndex]) *
+                        static_cast<int32_t>(zm[zmIndex]));
+            }
+            outRow[col] = sum;
+          }
+          results_[row] = {outRow, 256};
+        }
         break;
       }
       case Opcode::AArch64_UUNPKHI_ZZ_D: {  // uunpkhi zd.d, zn.s
@@ -6135,6 +9090,10 @@ void Instruction::execute() {
         results_[0] = sveZip_preds<uint32_t>(sourceValues_, VL_bits, false);
         break;
       }
+      case Opcode::AArch64_ZIP1_ZZZ_B: {  // zip1 zd.b, zn.b, zm.b
+        results_[0] = sveZip_vecs<uint8_t>(sourceValues_, VL_bits, false);
+        break;
+      }
       case Opcode::AArch64_ZIP1_ZZZ_D: {  // zip1 zd.d, zn.d, zm.d
         results_[0] = sveZip_vecs<uint64_t>(sourceValues_, VL_bits, false);
         break;
@@ -6187,6 +9146,10 @@ void Instruction::execute() {
         results_[0] = sveZip_preds<uint32_t>(sourceValues_, VL_bits, true);
         break;
       }
+      case Opcode::AArch64_ZIP2_ZZZ_B: {  // zip2 zd.b, zn.b, zm.b
+        results_[0] = sveZip_vecs<uint8_t>(sourceValues_, VL_bits, true);
+        break;
+      }
       case Opcode::AArch64_ZIP2_ZZZ_D: {  // zip2 zd.d, zn.d, zm.d
         results_[0] = sveZip_vecs<uint64_t>(sourceValues_, VL_bits, true);
         break;
@@ -6223,6 +9186,29 @@ void Instruction::execute() {
         results_[0] = vecZip<uint8_t, 8>(sourceValues_, true);
         break;
       }
+      case Opcode::AArch64_ZIP_VG4_4Z4Z_S: {  // zip {zd1.s - zd4.s}, {zn1.s -
+                                              // zn4.s}
+        const uint32_t* zn[4];
+        zn[0] = sourceValues_[0].getAsVector<uint32_t>();
+        zn[1] = sourceValues_[1].getAsVector<uint32_t>();
+        zn[2] = sourceValues_[2].getAsVector<uint32_t>();
+        zn[3] = sourceValues_[3].getAsVector<uint32_t>();
+
+        const uint16_t quads = VL_bits / (32 * 4);
+
+        uint32_t out[4][64] = {{0}, {0}, {0}, {0}};
+        for (int r = 0; r < 4; r++) {
+          const uint16_t base = r * quads;
+          for (int q = 0; q < quads; q++) {
+            out[r][4 * q] = zn[0][base + q];
+            out[r][4 * q + 1] = zn[1][base + q];
+            out[r][4 * q + 2] = zn[2][base + q];
+            out[r][4 * q + 3] = zn[3][base + q];
+          }
+          results_[r] = RegisterValue(out[r], 256);
+        }
+        break;
+      }
       case Opcode::AArch64_ZERO_M: {  // zero {mask}
         // SME
         // Not in right context mode. Raise exception
@@ -6231,6 +9217,15 @@ void Instruction::execute() {
         for (int i = 0; i < destinationRegisterCount_; i++) {
           results_[i] = RegisterValue(0, 256);
         }
+        break;
+      }
+      case Opcode::AArch64_ZERO_T: {  // zero {zt0}
+        // SME
+        // Not in right context mode. Raise exception
+        if (!ZAenabled) return ZAdisabled();
+
+        // ZT0 has a fixed width of 512-bits
+        results_[0] = RegisterValue(0, 64);
         break;
       }
       default:

@@ -25,7 +25,7 @@ class Architecture : public arch::Architecture {
   /** Pre-decode instruction memory into a macro-op of `Instruction`
    * instances. Returns the number of bytes consumed to produce it (always 4),
    * and writes into the supplied macro-op vector. */
-  uint8_t predecode(const void* ptr, uint16_t bytesAvailable,
+  uint8_t predecode(const uint8_t* ptr, uint16_t bytesAvailable,
                     uint64_t instructionAddress,
                     MacroOp& output) const override;
 
@@ -69,6 +69,12 @@ class Architecture : public arch::Architecture {
 
   /** Returns the current value of SVCRval_. */
   uint64_t getSVCRval() const;
+
+  /** Returns if SVE Streaming Mode is enabled. */
+  bool isStreamingModeEnabled() const;
+
+  /** Returns if the SME ZA Register is enabled. */
+  bool isZARegisterEnabled() const;
 
   /** Update the value of SVCRval_. */
   void setSVCRval(const uint64_t newVal) const;

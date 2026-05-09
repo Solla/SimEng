@@ -146,7 +146,7 @@ RegisterValue vecCountPerByte(srcValContainer& sourceValues) {
   const uint8_t* n = sourceValues[0].getAsVector<uint8_t>();
   T out[16 / sizeof(T)] = {0};
   for (int i = 0; i < I; i++) {
-    for (int j = 0; j < (sizeof(T) * 8); j++) {
+    for (size_t j = 0; j < (sizeof(T) * 8); j++) {
       // Move queried bit to LSB and extract via an AND operator
       out[i] += ((n[i] >> j) & 1);
     }
@@ -187,10 +187,10 @@ RegisterValue vecExtVecs_index(
   const uint64_t index = static_cast<uint64_t>(metadata.operands[3].imm);
   T out[16 / sizeof(T)] = {0};
 
-  for (int i = index; i < I; i++) {
+  for (uint64_t i = index; i < I; i++) {
     out[i - index] = n[i];
   }
-  for (int i = 0; i < index; i++) {
+  for (uint64_t i = 0; i < index; i++) {
     out[I - index + i] = m[i];
   }
   return {out, 256};
@@ -247,26 +247,6 @@ RegisterValue vecFCompare(srcValContainer& sourceValues, bool cmpToZero,
     out[i] = func(n[i], cmpToZero ? static_cast<T>(0) : m[i])
                  ? static_cast<C>(-1)
                  : 0;
-  }
-  return {out, 256};
-}
-
-/** Helper function for instructions with the format `fac<ge, gt, le, lt> vd,
- * vn, vm`.
- * T represents operand type (e.g. vd.2d is double).
- * C represents comparison type (e.g. for T=float, comparison type is
- * uint32_t).
- * I represents the number of elements in the output array to be
- * updated (e.g. for vd.8b I = 8).
- * Returns correctly formatted RegisterValue. */
-template <typename T, typename C, int I>
-RegisterValue vecFCompareAbs(srcValContainer& sourceValues,
-                             std::function<bool(T, T)> func) {
-  const T* n = sourceValues[0].getAsVector<T>();
-  const T* m = sourceValues[1].getAsVector<T>();
-  C out[16 / sizeof(C)] = {0};
-  for (int i = 0; i < I; i++) {
-    out[i] = func(std::fabs(n[i]), std::fabs(m[i])) ? static_cast<C>(-1) : 0;
   }
   return {out, 256};
 }
@@ -588,26 +568,14 @@ RegisterValue vecUMaxP(srcValContainer& sourceValues) {
   const T* n = sourceValues[0].getAsVector<T>();
   const T* m = sourceValues[1].getAsVector<T>();
 
+  // Concatenate the vectors
+  T temp[2 * I];
+  memcpy(temp, n, sizeof(T) * I);
+  memcpy(temp + (sizeof(T) * I), m, sizeof(T) * I);
+  // Compare each adjacent pair of elements
   T out[I];
-  for (int i = 0; i < I / 2; i++) {
-    out[i] = std::max(n[2 * i], n[(2 * i) + 1]);
-    out[i + (I / 2)] = std::max(m[2 * i], m[(2 * i) + 1]);
-  }
-  return {out, 256};
-}
-
-/** Helper function for NEON instructions with the format `umaxv vd, vn`.
- * T represents the type of sourceValues (e.g. for vn.2d, T = uint64_t).
- * I represents the number of elements in the output array to be updated (e.g.
- * for vd.8b I = 8).
- * Returns correctly formatted RegisterValue. */
-template <typename T, int I>
-RegisterValue vecUMaxV(srcValContainer& sourceValues) {
-  const T* n = sourceValues[0].getAsVector<T>();
-
-  T out = n[0];
-  for (int i = 1; i < I; i++) {
-    out = std::max(out, n[i]);
+  for (int i = 0; i < I; i++) {
+    out[i] = std::max(temp[2 * i], temp[2 * i + 1]);
   }
   return {out, 256};
 }
@@ -622,10 +590,14 @@ RegisterValue vecUMinP(srcValContainer& sourceValues) {
   const T* n = sourceValues[0].getAsVector<T>();
   const T* m = sourceValues[1].getAsVector<T>();
 
+  // Concatenate the vectors
+  T temp[2 * I];
+  memcpy(temp, n, sizeof(T) * I);
+  memcpy(temp + (sizeof(T) * I), m, sizeof(T) * I);
+
   T out[I];
-  for (int i = 0; i < I / 2; i++) {
-    out[i] = std::min(n[2 * i], n[(2 * i) + 1]);
-    out[i + (I / 2)] = std::min(m[2 * i], m[(2 * i) + 1]);
+  for (int i = 0; i < I; i++) {
+    out[i] = std::min(temp[2 * i], temp[2 * i + 1]);
   }
   return {out, 256};
 }
@@ -790,7 +762,7 @@ template <typename T, int I>
 RegisterValue vecSshrShift_imm(
     srcValContainer& sourceValues,
     const simeng::arch::aarch64::InstructionMetadata& metadata) {
-  const T* n = sourceValues[1].getAsVector<T>();
+  const T* n = sourceValues[0].getAsVector<T>();
   uint64_t shift = metadata.operands[2].imm;
   T out[16 / sizeof(T)] = {0};
   for (int i = 0; i < I; i++) {
@@ -854,27 +826,27 @@ RegisterValue vecTbl(
   assert(I == 8 || I == 16);
 
   // Vm contains the indices to fetch from table
-  const int8_t* Vm =
+  const uint8_t* Vm =
       sourceValues[metadata.operandCount - 2]
-          .getAsVector<int8_t>();  // final operand is vecMovi_imm
+          .getAsVector<uint8_t>();  // final operand is vecMovi_imm
 
   // All sourceValues except the first and last are the vector registers to
   // construct the table from
   const uint8_t n_table_regs = metadata.operandCount - 2;
 
   // Create table from vectors. All table sourceValues must be of 16b format.
-  int tableSize = 16 * n_table_regs;
-  uint8_t table[tableSize];
-  for (int i = 0; i < n_table_regs; i++) {
-    const int8_t* currentVector = sourceValues[i].getAsVector<int8_t>();
-    for (int j = 0; j < 16; j++) {
+  const uint16_t tableSize = 16 * n_table_regs;
+  std::vector<uint8_t> table(tableSize, 0);
+  for (uint8_t i = 0; i < n_table_regs; i++) {
+    const uint8_t* currentVector = sourceValues[i].getAsVector<uint8_t>();
+    for (uint8_t j = 0; j < 16; j++) {
       table[16 * i + j] = currentVector[j];
     }
   }
 
-  int8_t out[16 / sizeof(int8_t)] = {0};
+  uint8_t out[16 / sizeof(uint8_t)] = {0};
   for (int i = 0; i < I; i++) {
-    unsigned int index = Vm[i];
+    uint8_t index = Vm[i];
 
     // If an index is out of range for the table, the result for that lookup
     // is 0
@@ -976,6 +948,63 @@ RegisterValue vecUzp(srcValContainer& sourceValues, bool isUzp1) {
     out[(I / 2) + i] = m[index];
   }
 
+  return {out, 256};
+}
+
+/** Helper function for NEON instructions with the format `udot vd.s, vn.b,
+ * vm.b`. D represents the number of elements in the output vector to be updated
+ * (i.e. for vd.2s D = 2). Only 2 or 4 are valid. Returns correctly formatted
+ * RegisterValue. */
+template <int D>
+RegisterValue vecUdot(
+    srcValContainer& sourceValues,
+    const simeng::arch::aarch64::InstructionMetadata& metadata) {
+  // Check D and N are valid values
+  static_assert((D == 2 || D == 4) &&
+                "D must be either 2 or 4 to align with vd.2s or vd.4s.");
+
+  const uint32_t* vd = sourceValues[0].getAsVector<uint32_t>();
+  const uint8_t* vn = sourceValues[1].getAsVector<uint8_t>();
+  const uint8_t* vm = sourceValues[2].getAsVector<uint8_t>();
+
+  uint32_t out[D] = {0};
+  for (int i = 0; i < D; i++) {
+    out[i] = vd[i];
+    for (int j = 0; j < 4; j++) {
+      out[i] += (static_cast<uint32_t>(vn[(4 * i) + j]) *
+                 static_cast<uint32_t>(vm[(4 * i) + j]));
+    }
+  }
+  return {out, 256};
+}
+
+/** Helper function for NEON instructions with the format `udot vd.s, vn.b,
+ * vm.4b[index]`.
+ * D represents the number of elements in the output vector to be updated (i.e.
+ * for vd.2s D = 2). Only 2 or 4 are valid.
+ * Returns correctly formatted RegisterValue. */
+template <int D>
+RegisterValue vecUdot_byElement(
+    srcValContainer& sourceValues,
+    const simeng::arch::aarch64::InstructionMetadata& metadata) {
+  // Check D and N are valid values
+  static_assert((D == 2 || D == 4) &&
+                "D must be either 2 or 4 to align with vd.2s or vd.4s.");
+
+  const uint32_t* vd = sourceValues[0].getAsVector<uint32_t>();
+  const uint8_t* vn = sourceValues[1].getAsVector<uint8_t>();
+  const uint8_t* vm = sourceValues[2].getAsVector<uint8_t>();
+  const int index = metadata.operands[2].vector_index;
+
+  uint32_t out[D] = {0};
+  for (int i = 0; i < D; i++) {
+    uint32_t acc = vd[i];
+    for (int j = 0; j < 4; j++) {
+      acc += (static_cast<uint32_t>(vn[(4 * i) + j]) *
+              static_cast<uint32_t>(vm[(4 * index) + j]));
+    }
+    out[i] = acc;
+  }
   return {out, 256};
 }
 

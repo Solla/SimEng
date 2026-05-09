@@ -10,7 +10,7 @@ namespace arch {
 namespace aarch64 {
 
 /** The maximum number of source registers a non-SME instruction can have. */
-const uint8_t MAX_SOURCE_REGISTERS = 6;
+const uint8_t MAX_SOURCE_REGISTERS = 7;
 
 /** The maximum number of destination registers a non-SME instruction can have.
  */
@@ -18,7 +18,7 @@ const uint8_t MAX_DESTINATION_REGISTERS = 5;
 
 /** The maximum number of source/destination operands an SME instruction can
  * have in addition to any ZA operands. */
-const uint8_t ADDITIONAL_SME_REGISTERS = 8;
+const uint8_t ADDITIONAL_SME_REGISTERS = 11;
 
 /** Simple class to allow AArch64 instructions to use std::array for operands in
  * most cases, but for SME instructions a std::vector can be utilised to allow

@@ -2,15 +2,16 @@
 
 #include <string>
 
-#include "simeng/AlwaysNotTakenPredictor.hh"
 #include "simeng/Core.hh"
 #include "simeng/Elf.hh"
-#include "simeng/GenericPredictor.hh"
-#include "simeng/PerceptronPredictor.hh"
 #include "simeng/SpecialFileDirGen.hh"
 #include "simeng/arch/Architecture.hh"
 #include "simeng/arch/aarch64/Architecture.hh"
 #include "simeng/arch/riscv/Architecture.hh"
+#include "simeng/branchpredictors/AlwaysNotTakenPredictor.hh"
+#include "simeng/branchpredictors/GenericPredictor.hh"
+#include "simeng/branchpredictors/PerceptronPredictor.hh"
+#include "simeng/branchpredictors/TAGEPredictor.hh"
 #include "simeng/config/SimInfo.hh"
 #include "simeng/kernel/Linux.hh"
 #include "simeng/memory/FixedLatencyMemoryInterface.hh"
@@ -20,19 +21,7 @@
 #include "simeng/models/outoforder/Core.hh"
 #include "simeng/pipeline/A64FXPortAllocator.hh"
 #include "simeng/pipeline/BalancedPortAllocator.hh"
-
-// Program used when no executable is provided; counts down from
-// 1024*1024, with an independent `orr` at the start of each branch.
-static uint32_t hex_[] = {
-    0x320C03E0,  // orr w0, wzr, #1048576
-    0x320003E1,  // orr w0, wzr, #1
-    0x71000400,  // subs w0, w0, #1
-    0x54FFFFC1,  // b.ne -8
-                 // .exit:
-    0xD2800000,  // mov x0, #0
-    0xD2800BC8,  // mov x8, #94
-    0xD4000001,  // svc #0
-};
+#include "simeng/pipeline/M1PortAllocator.hh"
 
 namespace simeng {
 
@@ -46,7 +35,7 @@ class CoreInstance {
 
   /** CoreInstance with source code assembled by LLVM and a model configuration.
    */
-  CoreInstance(char* assembledSource, size_t sourceSize,
+  CoreInstance(uint8_t* assembledSource, size_t sourceSize,
                ryml::ConstNodeRef config = config::SimInfo::getConfig());
 
   ~CoreInstance();
@@ -75,10 +64,10 @@ class CoreInstance {
   std::shared_ptr<char> getProcessImage() const;
 
   /** Getter for the size of the created process image. */
-  const uint64_t getProcessImageSize() const;
+  uint64_t getProcessImageSize() const;
 
   /* Getter for heap start. */
-  const uint64_t getHeapStart() const;
+  uint64_t getHeapStart() const;
 
  private:
   /** Generate the appropriate simulation objects as parameterised by the
@@ -111,7 +100,7 @@ class CoreInstance {
   simeng::kernel::Linux kernel_;
 
   /** Reference to source assembled by LLVM. */
-  char* source_ = nullptr;
+  uint8_t* source_ = nullptr;
 
   /** Size of the source code assembled by LLVM. */
   size_t sourceSize_ = 0;

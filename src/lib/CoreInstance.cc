@@ -11,7 +11,7 @@ CoreInstance::CoreInstance(std::string executablePath,
   generateCoreModel(executablePath, executableArgs);
 }
 
-CoreInstance::CoreInstance(char* assembledSource, size_t sourceSize,
+CoreInstance::CoreInstance(uint8_t* assembledSource, size_t sourceSize,
                            ryml::ConstNodeRef config)
     : config_(config),
       kernel_(kernel::Linux(
@@ -96,7 +96,7 @@ void CoreInstance::createProcess(std::string executablePath,
   } else if (assembledSource_) {
     // Create a process image from the source code assembled by LLVM.
     process_ = std::make_unique<kernel::LinuxProcess>(
-        span<char>(source_, sourceSize_), config_);
+        span<const uint8_t>(source_, sourceSize_), config_);
     // Raise error if created process is not valid
     if (!process_->isValid()) {
       std::cerr << "[SimEng:CoreInstance] Could not create process based on "
@@ -105,17 +105,12 @@ void CoreInstance::createProcess(std::string executablePath,
       exit(1);
     }
   } else {
-    // Create a process image from the set of instructions held in hex_
-    process_ = std::make_unique<kernel::LinuxProcess>(
-        span<char>(reinterpret_cast<char*>(hex_), sizeof(hex_)), config_);
-
-    // Raise error if created process is not valid
-    if (!process_->isValid()) {
-      std::cerr << "[SimEng:CoreInstance] Could not create process based on "
-                   "supplied instruction span"
-                << std::endl;
-      exit(1);
-    }
+    // This case shouldn't be reached as the default program should always be
+    // provided
+    std::cerr << "[SimEng:CoreInstance] Unexpected parameters given to core "
+                 "instance. No default program and no assembled source"
+              << std::endl;
+    exit(1);
   }
 
   // Create the process memory space from the generated process image
@@ -227,6 +222,8 @@ void CoreInstance::createCore() {
     predictor_ = std::make_unique<GenericPredictor>();
   } else if (predictorType == "Perceptron") {
     predictor_ = std::make_unique<PerceptronPredictor>();
+  } else if (predictorType == "TAGE") {
+    predictor_ = std::make_unique<TAGEPredictor>();
   }
 
   // Extract the port arrangement from the config file
@@ -241,8 +238,37 @@ void CoreInstance::createCore() {
       portArrangement[i].push_back(grp);
     }
   }
-  portAllocator_ =
-      std::make_unique<pipeline::BalancedPortAllocator>(portArrangement);
+
+  // Initialise the desired port allocator
+  std::string portAllocatorType =
+      config_["Port-Allocator"]["Type"].as<std::string>();
+  if (portAllocatorType == "Balanced") {
+    portAllocator_ =
+        std::make_unique<pipeline::BalancedPortAllocator>(portArrangement);
+  } else if (portAllocatorType == "A64FX") {
+    portAllocator_ =
+        std::make_unique<pipeline::A64FXPortAllocator>(portArrangement);
+  } else if (portAllocatorType == "M1") {
+    // Extract the reservation station arrangement from the config file
+    auto config_rs = config_["Reservation-Stations"];
+    std::vector<std::pair<uint16_t, uint64_t>> rsArrangement;
+    for (size_t i = 0; i < config_rs.num_children(); i++) {
+      auto config_rs_ports = config_rs[i]["Port-Nums"];
+      for (size_t j = 0; j < config_rs_ports.num_children(); j++) {
+        uint16_t port = config_rs_ports[j].as<uint16_t>();
+        if (static_cast<uint16_t>(rsArrangement.size()) < port + 1) {
+          rsArrangement.resize(port + 1);
+        }
+        rsArrangement[port] = {i, config_rs[i]["Size"].as<uint64_t>()};
+      }
+    }
+    portAllocator_ = std::make_unique<pipeline::M1PortAllocator>(
+        portArrangement, rsArrangement);
+  } else {
+    std::cout << "[SimEng:CoreInstnce] Invalid Port Allocator type selected."
+              << std::endl;
+    exit(EXIT_FAILURE);
+  }
 
   // Construct the core object based on the defined simulation mode
   uint64_t entryPoint = process_->getEntryPoint();
@@ -317,12 +343,10 @@ std::shared_ptr<char> CoreInstance::getProcessImage() const {
   return processMemory_;
 }
 
-const uint64_t CoreInstance::getProcessImageSize() const {
+uint64_t CoreInstance::getProcessImageSize() const {
   return processMemorySize_;
 }
 
-const uint64_t CoreInstance::getHeapStart() const {
-  return process_->getHeapStart();
-}
+uint64_t CoreInstance::getHeapStart() const { return process_->getHeapStart(); }
 
 }  // namespace simeng
