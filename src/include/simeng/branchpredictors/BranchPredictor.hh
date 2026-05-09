@@ -27,6 +27,10 @@ class BranchPredictor {
   virtual void update(uint64_t address, bool isTaken, uint64_t targetAddress,
                       BranchType type, uint64_t instructionId) = 0;
 
+  /** Adds a branch to the Fetch Target Queue (FTQ). Used for speculative
+   * updates. */
+  virtual void addToFTQ(uint64_t address, bool isTaken) {}
+
   /** Provides flushing behaviour for the implemented branch prediction schemes
    * via the instruction address.  Branches must be flushed in reverse
    * program order (though, if a block of n instructions is being flushed at

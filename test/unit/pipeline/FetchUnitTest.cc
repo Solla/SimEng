@@ -41,6 +41,8 @@ class PipelineFetchUnitTest
         uop2(new MockInstruction),
         uopPtr2(uop2) {
     uopPtr->setInstructionAddress(0);
+    ON_CALL(isa, getMinInstructionSize()).WillByDefault(Return(2));
+    ON_CALL(isa, getMaxInstructionSize()).WillByDefault(Return(4));
   }
 
  protected:

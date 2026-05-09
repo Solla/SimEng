@@ -657,10 +657,6 @@ void Instruction::execute() {
         results_[0] = asrv_3gpr<int64_t>(sourceValues_);
         break;
       }
-      case Opcode::AArch64_AUTIASP: {  // autiasp xd, sp
-        // Pointer Authentication not supported, do nothing
-        break;
-      }
       case Opcode::AArch64_B: {  // b label
         branchTaken_ = true;
         branchAddress_ = instructionAddress_ + metadata_.operands[0].imm;

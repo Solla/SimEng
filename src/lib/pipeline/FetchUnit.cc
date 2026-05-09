@@ -22,7 +22,7 @@ FetchUnit::FetchUnit(PipelineBuffer<MacroOp>& output,
   assert(blockSize_ >= isa_.getMaxInstructionSize() &&
          "fetch block size must be larger than the largest instruction");
   mopCache_ = std::vector<std::pair<uint64_t, uint64_t>>(
-      static_cast<uint64_t>(1 << mopCacheTagBits_), {0ull, 0ull});
+      static_cast<uint64_t>(1 << mopCacheTagBits_), {0ull, ~0ull});
 
   uint64_t blockAddress = pc_ & blockMask_;
   instructionMemory_.requestRead({blockAddress, blockSize_});
@@ -30,6 +30,16 @@ FetchUnit::FetchUnit(PipelineBuffer<MacroOp>& output,
 }
 
 FetchUnit::~FetchUnit() {}
+
+void FetchUnit::requestFromPC() {
+  uint64_t blockAddress = pc_ & blockMask_;
+  auto it = std::find(requestedBlocks_.begin(), requestedBlocks_.end(),
+                      blockAddress);
+  if (it == requestedBlocks_.end()) {
+    instructionMemory_.requestRead({blockAddress, blockSize_});
+    requestedBlocks_.push_back(blockAddress);
+  }
+}
 
 void FetchUnit::tick() {
   if (output_.isStalled()) {
@@ -45,25 +55,27 @@ void FetchUnit::tick() {
 
   // Check if any fetched instruction blocks have registered requests
   for (const auto& blk : fetched) {
+    // If the block has been requested, pre-decode all possible instructions
+    // in block
+    const uint8_t* fetchData = blk.data.getAsVector<uint8_t>();
+    uint16_t dataOffset = 0;
+    uint64_t address = blk.target.address;
+
+    uint16_t minStep = std::max<uint16_t>(isa_.getMinInstructionSize(), 1);
+    while (dataOffset < blk.target.size) {
+      // Get mop cache index
+      uint64_t cacheIndex = address & ((1 << mopCacheTagBits_) - 1);
+      memcpy(&mopCache_[cacheIndex].first, (fetchData + dataOffset),
+             std::min<uint16_t>(blk.target.size - dataOffset, 4));
+      mopCache_[cacheIndex].second = address;
+
+      // Increment the offset and address
+      dataOffset += minStep;
+      address += static_cast<uint64_t>(minStep);
+    }
     auto it = std::find(requestedBlocks_.begin(), requestedBlocks_.end(),
                         blk.target.address);
     if (it != requestedBlocks_.end()) {
-      // If the block has been requested, pre-decode all possible instructions
-      // in block
-      const uint8_t* fetchData = blk.data.getAsVector<uint8_t>();
-      uint16_t dataOffset = 0;
-      uint64_t address = blk.target.address;
-
-      while (dataOffset < blk.target.size) {
-        // Get mop cache index
-        uint64_t cacheIndex = address & ((1 << mopCacheTagBits_) - 1);
-        memcpy(&mopCache_[cacheIndex].first, (fetchData + dataOffset), 4);
-        mopCache_[cacheIndex].second = address;
-
-        // Increment the offset and address
-        dataOffset += static_cast<uint16_t>(4);
-        address += static_cast<uint64_t>(4);
-      }
       requestedBlocks_.erase(it);
     }
   }
@@ -75,11 +87,18 @@ void FetchUnit::tick() {
     uint64_t cacheIndex = pc_ & ((1 << mopCacheTagBits_) - 1);
     std::pair<uint64_t, uint64_t> cachedEntry = mopCache_[cacheIndex];
 
-    if (cachedEntry.first != 0 && (cachedEntry.second == pc_)) {
+    if (cachedEntry.second == pc_) {
       mopQueue_.push_back({});
       auto& macroOp = mopQueue_.back();
 
-      auto bytesRead = isa_.predecode(&(cachedEntry.first), 4, pc_, macroOp);
+      // Calculate how many bytes are available in the current fetch block
+      uint64_t blockEnd = (pc_ & blockMask_) + blockSize_;
+      uint16_t bytesAvailable =
+          static_cast<uint16_t>(std::min<uint64_t>(4, blockEnd - pc_));
+
+      auto bytesRead = isa_.predecode(
+          reinterpret_cast<const uint8_t*>(&(cachedEntry.first)),
+          bytesAvailable, pc_, macroOp);
 
       // If predecode fails, bail and wait for more data
       if (bytesRead == 0) {
@@ -91,30 +110,28 @@ void FetchUnit::tick() {
       // (e.g. RET, BL, etc).
       BranchPrediction prediction = {false,
                                      pc_ + static_cast<uint64_t>(bytesRead)};
-      if (macroOp[0]->isBranch()) {
-        prediction = branchPredictor_.predict(pc_, macroOp[0]->getBranchType(),
-                                              macroOp[0]->getKnownOffset());
+      if (macroOp.size() > 0) {
+        if (macroOp[0]->isBranch()) {
+          prediction = branchPredictor_.predict(
+              pc_, macroOp[0]->getBranchType(), macroOp[0]->getKnownOffset());
+          branchFetchedCount_++;
+        }
+        macroOp[0]->setBranchPrediction(prediction);
       }
-      macroOp[0]->setBranchPrediction(prediction);
 
       // Update PC based on previous branch prediction
-      if (!prediction.taken) {
+      if (!prediction.isTaken) {
         // Predicted as not taken; increment PC to next instruction
         pc_ += bytesRead;
       } else {
         // Predicted as taken; set PC to predicted target address
         pc_ = prediction.target;
       }
+      hasHalted_ = (pc_ >= programByteLength_);
     } else {
       // Request new block from instruction memory if there isn't an existing
       // request
-      uint64_t blockAddress = pc_ & blockMask_;
-      auto it = std::find(requestedBlocks_.begin(), requestedBlocks_.end(),
-                          blockAddress);
-      if (it == requestedBlocks_.end()) {
-        instructionMemory_.requestRead({blockAddress, blockSize_});
-        requestedBlocks_.push_back(blockAddress);
-      }
+      requestFromPC();
       break;
     }
   }
@@ -138,6 +155,10 @@ void FetchUnit::updatePC(uint64_t address) {
 }
 
 uint64_t FetchUnit::getBranchStalls() const { return branchStalls_; }
+
+uint64_t FetchUnit::getBranchFetchedCount() const {
+  return branchFetchedCount_;
+}
 
 }  // namespace pipeline
 }  // namespace simeng

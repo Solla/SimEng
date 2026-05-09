@@ -61,6 +61,12 @@ class ExecuteUnit {
    * instructions. */
   bool isEmpty() const;
 
+  /** Retrieve the number of branches executed by this unit. */
+  uint64_t getBranchExecutedCount() const;
+
+  /** Retrieve the number of branch mispredictions discovered by this unit. */
+  uint64_t getBranchMispredictedCount() const;
+
  private:
   /** Execute the supplied uop, write it into the output buffer, and forward
    * results back to dispatch/issue. */
@@ -119,6 +125,12 @@ class ExecuteUnit {
 
   /** The number of active execution cycles that were observed. */
   uint64_t cycles_ = 0;
+
+  /** The number of branches executed by this unit. */
+  uint64_t branchExecutedCount_ = 0;
+
+  /** The number of branch mispredictions discovered by this unit. */
+  uint64_t branchMispredictedCount_ = 0;
 };
 
 }  // namespace pipeline

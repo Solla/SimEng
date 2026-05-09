@@ -1,4 +1,4 @@
-#include "simeng/GenericPredictor.hh"
+#include "simeng/branchpredictors/GenericPredictor.hh"
 
 #include <iostream>
 
@@ -47,9 +47,9 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
 
   // Amend prediction based on branch type
   if (type == BranchType::Unconditional) {
-    prediction.taken = true;
+    prediction.isTaken = true;
   } else if (type == BranchType::Return) {
-    prediction.taken = true;
+    prediction.isTaken = true;
     // Return branches can use the RAS if an entry is available
     if (ras_.size() > 0) {
       prediction.target = ras_.back();
@@ -58,7 +58,7 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
       ras_.pop_back();
     }
   } else if (type == BranchType::SubroutineCall) {
-    prediction.taken = true;
+    prediction.isTaken = true;
     // Subroutine call branches must push their associated return address to RAS
     if (ras_.size() >= rasSize_) {
       ras_.pop_front();
@@ -67,21 +67,22 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
     // Record that this address is a branch-and-link instruction
     rasHistory_[address] = 0;
   } else if (type == BranchType::Conditional) {
-    if (!prediction.taken) prediction.target = address + 4;
+    if (!prediction.isTaken) prediction.target = address + 4;
   }
 
   // Store the hashed index for correct hashing in update()
-  FTQ_.emplace_back(prediction.taken, hashedIndex);
+  FTQ_.emplace_back(prediction.isTaken, hashedIndex);
 
   // Speculatively update the global history
   globalHistory_ =
-      ((globalHistory_ << 1) | prediction.taken) & globalHistoryLength_;
+      ((globalHistory_ << 1) | prediction.isTaken) & globalHistoryLength_;
 
   return prediction;
 }
 
 void GenericPredictor::update(uint64_t address, bool taken,
-                              uint64_t targetAddress, BranchType type) {
+                              uint64_t targetAddress, BranchType type,
+                              uint64_t instructionId) {
   // Get previous prediciton and index calculated from the FTQ
   bool prevPrediction = FTQ_.front().first;
   uint64_t hashedIndex = FTQ_.front().second;

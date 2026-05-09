@@ -1,4 +1,5 @@
-#include "simeng/PerceptronPredictor.hh"
+#include "simeng/branchpredictors/PerceptronPredictor.hh"
+#include <cmath>
 
 namespace simeng {
 
@@ -12,7 +13,7 @@ PerceptronPredictor::PerceptronPredictor(ryml::ConstNodeRef config)
   btb_.resize(btbSize);
   // Initialise perceptron values with 0 for the global history weights, and 1
   // for the bias weight; and initialise the target with 0 (i.e., unknown)
-  for (int i = 0; i < btbSize; i++) {
+  for (uint64_t i = 0; i < btbSize; i++) {
     btb_[i].first.assign(globalHistoryLength_, 0);
     btb_[i].first.push_back(1);
     btb_[i].second = 0;
@@ -54,9 +55,9 @@ BranchPrediction PerceptronPredictor::predict(uint64_t address, BranchType type,
 
   // Amend prediction based on branch type
   if (type == BranchType::Unconditional) {
-    prediction.taken = true;
+    prediction.isTaken = true;
   } else if (type == BranchType::Return) {
-    prediction.taken = true;
+    prediction.isTaken = true;
     // Return branches can use the RAS if an entry is available
     if (ras_.size() > 0) {
       prediction.target = ras_.back();
@@ -65,7 +66,7 @@ BranchPrediction PerceptronPredictor::predict(uint64_t address, BranchType type,
       ras_.pop_back();
     }
   } else if (type == BranchType::SubroutineCall) {
-    prediction.taken = true;
+    prediction.isTaken = true;
     // Subroutine call branches must push their associated return address to RAS
     if (ras_.size() >= rasSize_) {
       ras_.pop_front();
@@ -74,23 +75,24 @@ BranchPrediction PerceptronPredictor::predict(uint64_t address, BranchType type,
     // Record that this address is a branch-and-link instruction
     rasHistory_[address] = 0;
   } else if (type == BranchType::Conditional) {
-    if (!prediction.taken) prediction.target = address + 4;
+    if (!prediction.isTaken) prediction.target = address + 4;
   }
 
   // Store the global history for correct hashing in update() --
   // needs to be global history and not the hashed index as hashing loses
   // information at longer global history lengths
-  FTQ_.emplace_back(prediction.taken, globalHistory_);
+  FTQ_.emplace_back(prediction.isTaken, globalHistory_);
 
   // speculatively update global history
   globalHistory_ =
-      ((globalHistory_ << 1) | prediction.taken) & globalHistoryMask_;
+      ((globalHistory_ << 1) | prediction.isTaken) & globalHistoryMask_;
 
   return prediction;
 }
 
 void PerceptronPredictor::update(uint64_t address, bool taken,
-                                 uint64_t targetAddress, BranchType type) {
+                                 uint64_t targetAddress, BranchType type,
+                                 uint64_t instructionId) {
   // Get previous branch state and prediction from FTQ
   bool prevPrediction = FTQ_.front().first;
   uint64_t prevGlobalHistory = FTQ_.front().second;
@@ -108,10 +110,10 @@ void PerceptronPredictor::update(uint64_t address, bool taken,
 
   // Update the perceptron if the prediction was wrong, or the dot product's
   // magnitude was not greater than the training threshold
-  if ((directionPrediction != taken) || (abs(Pout) < trainingThreshold_)) {
+  if ((directionPrediction != taken) || (static_cast<uint64_t>(std::abs(Pout)) < trainingThreshold_)) {
     int8_t t = (taken) ? 1 : -1;
 
-    for (int i = 0; i < globalHistoryLength_; i++) {
+    for (uint64_t i = 0; i < globalHistoryLength_; i++) {
       int8_t xi =
           ((prevGlobalHistory & (1 << ((globalHistoryLength_ - 1) - i))) == 0)
               ? -1
@@ -174,7 +176,7 @@ void PerceptronPredictor::addToFTQ(uint64_t address, bool taken) {
 int64_t PerceptronPredictor::getDotProduct(
     const std::vector<int8_t>& perceptron, uint64_t history) {
   int64_t Pout = perceptron[globalHistoryLength_];
-  for (int i = 0; i < globalHistoryLength_; i++) {
+  for (uint64_t i = 0; i < globalHistoryLength_; i++) {
     // Get branch direction for ith entry in the history
     bool historyTaken =
         ((history & (1 << ((globalHistoryLength_ - 1) - i))) != 0);

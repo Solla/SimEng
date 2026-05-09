@@ -61,6 +61,12 @@ class FetchUnit {
    * branch. */
   uint64_t getBranchStalls() const;
 
+  /** Retrieve the number of branches fetched. */
+  uint64_t getBranchFetchedCount() const;
+
+  /** Request a block from instruction memory using the current PC. */
+  void requestFromPC();
+
  private:
   /** An output buffer connecting this unit to the decode unit. */
   PipelineBuffer<MacroOp>& output_;
@@ -97,6 +103,9 @@ class FetchUnit {
 
   /** The number of cycles fetch terminated early due to a predicted branch. */
   uint64_t branchStalls_ = 0;
+
+  /** The number of branches fetched. */
+  uint64_t branchFetchedCount_ = 0;
 
   /** The size of a fetch block, in bytes. */
   uint16_t blockSize_;

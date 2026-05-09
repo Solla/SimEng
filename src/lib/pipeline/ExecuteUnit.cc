@@ -139,12 +139,13 @@ void ExecuteUnit::execute(std::shared_ptr<Instruction>& uop) {
   if (uop->isBranch()) {
     pc_ = uop->getBranchAddress();
     // Update the branch instruction counter
-    branchesExecuted_++;
+    branchExecutedCount_++;
 
     if (uop->wasBranchMispredicted()) {
       // Misprediction; flush the pipeline
       shouldFlush_ = true;
       flushAfter_ = uop->getInstructionId();
+      branchMispredictedCount_++;
     }
   }
 
@@ -215,6 +216,14 @@ bool ExecuteUnit::isEmpty() const {
     return false;
   }
   return true;
+}
+
+uint64_t ExecuteUnit::getBranchExecutedCount() const {
+  return branchExecutedCount_;
+}
+
+uint64_t ExecuteUnit::getBranchMispredictedCount() const {
+  return branchMispredictedCount_;
 }
 
 }  // namespace pipeline

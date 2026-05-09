@@ -8878,7 +8878,7 @@ TEST_P(InstSve, uzp1) {
   std::array<uint8_t, 32UL> result;
   result.fill(0);
   uint8_t value;
-  for (int i = 0; i < VL / 32; i++) {
+  for (uint64_t i = 0; i < VL / 32; i++) {
     if ((i < (VL / 128)) || (i >= 3 * (VL / 128)))
       value = 0xF;
     else
@@ -8901,7 +8901,7 @@ TEST_P(InstSve, uzp1) {
   CHECK_PREDICATE(3, uint8_t,
                   fillPredFromTwoSources<uint8_t>({0}, {0x55}, VL / 64));
   result.fill(0);
-  for (int i = 0; i < VL / 32; i++) {
+  for (uint64_t i = 0; i < VL / 32; i++) {
     if ((i < (VL / 128)) || (i >= 3 * (VL / 128)))
       value = 0x5;
     else

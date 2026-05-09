@@ -4,7 +4,7 @@
 #include <map>
 #include <vector>
 
-#include "simeng/BranchPredictor.hh"
+#include "simeng/branchpredictors/BranchPredictor.hh"
 #include "simeng/config/SimInfo.hh"
 
 namespace simeng {
@@ -35,7 +35,7 @@ class GenericPredictor : public BranchPredictor {
   /** Updates appropriate predictor model objects based on the address and
    * outcome of the branch instruction. */
   void update(uint64_t address, bool taken, uint64_t targetAddress,
-              BranchType type) override;
+              BranchType type, uint64_t instructionId) override;
 
   /** Provides RAS rewinding behaviour. */
   void flush(uint64_t address) override;

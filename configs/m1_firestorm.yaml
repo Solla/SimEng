@@ -7,6 +7,8 @@ Core:
   Micro-Operations: True
 Fetch:
   Fetch-Block-Size: 64
+  MOP-Queue-Size: 2
+  MOP-Cache-Tag-Bits: 8
   Loop-Buffer-Size: 48
   Loop-Detection-Threshold: 4
 Process-Image:
