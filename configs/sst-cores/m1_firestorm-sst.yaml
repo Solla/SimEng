@@ -10,8 +10,8 @@ Fetch:
   Loop-Buffer-Size: 48
   Loop-Detection-Threshold: 4
 Process-Image:
-  Heap-Size: 1073741824 
-  Stack-Size: 1048576 
+  Heap-Size: 1073741824
+  Stack-Size: 1048576
 Register-Set:
   GeneralPurpose-Count: 394
   FloatingPoint/SVE-Count: 432
@@ -28,9 +28,9 @@ Port-Allocator:
   Type: M1
 Branch-Predictor:
   Type: "Perceptron"
-  BTB-Tag-Bits: 11 
+  BTB-Tag-Bits: 11
   Global-History-Length: 11
-  RAS-entries: 8 
+  RAS-entries: 8
 L1-Data-Memory:
   Interface-Type: External
 L1-Instruction-Memory:
