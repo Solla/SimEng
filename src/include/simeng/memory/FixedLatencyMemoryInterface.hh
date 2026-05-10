@@ -2,13 +2,11 @@
 
 #include <queue>
 #include <vector>
-#include <functional>
 
-#include "simeng/memory/MemoryInterface.hh"
+#include "simeng/MemoryInterface.hh"
+#include "simeng/memory/MMU.hh"
 
 namespace simeng {
-
-namespace memory {
 
 /** A fixed-latency memory interface request. */
 struct FixedLatencyMemoryInterfaceRequest {
@@ -42,7 +40,8 @@ struct FixedLatencyMemoryInterfaceRequest {
 /** A memory interface where all requests respond with a fixed latency. */
 class FixedLatencyMemoryInterface : public MemoryInterface {
  public:
-  FixedLatencyMemoryInterface(char* memory, size_t size, uint16_t latency, std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator = nullptr);
+  FixedLatencyMemoryInterface(std::shared_ptr<memory::MMU> mmu,
+                              uint16_t latency);
 
   /** Queue a read request from the supplied target location.
    *
@@ -60,28 +59,24 @@ class FixedLatencyMemoryInterface : public MemoryInterface {
   /** Clear the completed reads. */
   void clearCompletedReads() override;
 
-  /** Returns true if there are any outstanding memory requests in-flight. */
+  /** Returns true if there are any oustanding memory requests in-flight. */
   bool hasPendingRequests() const override;
 
   /** Tick the memory model to process the request queue. */
   void tick() override;
 
  private:
-  /** The array representing the memory system to access. */
-  char* memory_;
-  /** The size of accessible memory. */
-  size_t size_;
-  /** Vector of newly completed but not yet returned read requests. */
-  std::vector<MemoryReadResult> completedReads_;
-
-  /** Virtual Address Translator */
-  std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator_;
-
-  /** A queue containing all pending memory requests. */
-  std::queue<FixedLatencyMemoryInterfaceRequest> pendingRequests_;
+  /** Shared pointer to the core MMU. */
+  std::shared_ptr<memory::MMU> mmu_;
 
   /** The latency all requests are completed after. */
   uint16_t latency_;
+
+  /** A vector containing all completed read requests. */
+  std::vector<MemoryReadResult> completedReads_;
+
+  /** A queue containing all pending memory requests. */
+  std::queue<FixedLatencyMemoryInterfaceRequest> pendingRequests_;
 
   /** The number of times this interface has been ticked. */
   uint64_t tickCounter_ = 0;
@@ -92,5 +87,4 @@ class FixedLatencyMemoryInterface : public MemoryInterface {
   }
 };
 
-}  // namespace memory
 }  // namespace simeng

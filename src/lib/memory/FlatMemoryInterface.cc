@@ -1,51 +1,41 @@
-#include "simeng/memory/FlatMemoryInterface.hh"
+#include "simeng/FlatMemoryInterface.hh"
 
+#include <cassert>
 #include <iostream>
 
 namespace simeng {
 
-namespace memory {
-
-FlatMemoryInterface::FlatMemoryInterface(char* memory, size_t size, std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator)
-    : memory_(memory), size_(size), vaddrTranslator_(vaddrTranslator) {}
+FlatMemoryInterface::FlatMemoryInterface(std::shared_ptr<memory::MMU> mmu)
+    : mmu_(mmu) {}
 
 void FlatMemoryInterface::requestRead(const MemoryAccessTarget& target,
                                       uint64_t requestId) {
-  uint64_t paddr = target.address;
-  if (vaddrTranslator_) {
-    paddr = vaddrTranslator_(target.address, 0); // TID is 0
-  }
+  // Instantiate a callback function which will be invoked with the response
+  // to a read request.
+  auto fn = [this, target, requestId](memory::DataPacket dpkt) -> void {
+    if (dpkt.inFault_) {
+      completedReads_.push_back({target, RegisterValue(), requestId});
+      return;
+    }
+    completedReads_.push_back(
+        {target, RegisterValue(dpkt.data_.data(), dpkt.size_), requestId});
+  };
 
-  if (paddr + target.size > size_) {
-    // Read outside of memory; return an invalid value to signal a fault
-    completedReads_.push_back({target, RegisterValue(), requestId});
-    return;
-  }
-
-  const char* ptr = memory_ + paddr;
-
-  // Copy the data at the requested memory address into a RegisterValue
-  completedReads_.push_back(
-      {target, RegisterValue(ptr, target.size), requestId});
+  mmu_->bufferRequest(memory::DataPacket(target.address, target.size,
+                                         memory::READ_REQUEST, requestId),
+                      fn);
 }
 
 void FlatMemoryInterface::requestWrite(const MemoryAccessTarget& target,
                                        const RegisterValue& data) {
-  uint64_t paddr = target.address;
-  if (vaddrTranslator_) {
-    paddr = vaddrTranslator_(target.address, 0); // TID is 0
-  }
-
-  if (paddr + target.size > size_) {
-    std::cerr << "[SimEng:FlatLatencyMemoryInterface] Attempted to write "
-                 "beyond memory limit."
-              << std::endl;
-    exit(1);
-  }
-
-  auto ptr = memory_ + paddr;
-  // Copy the data from the RegisterValue to memory
-  memcpy(ptr, data.getAsVector<char>(), target.size);
+  const char* wdata = data.getAsVector<char>();
+  std::vector<char> dt(wdata, wdata + target.size);
+  // Responses to write requests are ignored by passing in a nullptr
+  // callback because they don't contain any information relevant to the
+  // simulation.
+  mmu_->bufferRequest(memory::DataPacket(target.address, target.size,
+                                         memory::WRITE_REQUEST, 0, dt),
+                      nullptr);
 }
 
 const span<MemoryReadResult> FlatMemoryInterface::getCompletedReads() const {
@@ -59,5 +49,4 @@ bool FlatMemoryInterface::hasPendingRequests() const { return false; }
 
 void FlatMemoryInterface::tick() {}
 
-}  // namespace memory
 }  // namespace simeng

@@ -7,8 +7,8 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "simeng/Config.hh"
 #include "simeng/Instruction.hh"
-#include "simeng/config/SimInfo.hh"
 #include "simeng/pipeline/PipelineBuffer.hh"
 #include "simeng/pipeline/PortAllocator.hh"
 
@@ -27,11 +27,12 @@ struct ReservationStationPort {
 /** A reservation station */
 struct ReservationStation {
   /** Size of reservation station */
-  uint32_t capacity;
+  uint16_t capacity;
   /** Number of instructions that can be dispatched to this unit per cycle. */
   uint16_t dispatchRate;
-  /** Current number of instructions in reservation station */
-  uint32_t currentSize;
+  /** Current number of non-stalled instructions
+   * in reservation station */
+  uint16_t currentSize;
   /** Issue ports belonging to reservation station */
   std::vector<ReservationStationPort> ports;
 };
@@ -58,8 +59,7 @@ class DispatchIssueUnit {
       PipelineBuffer<std::shared_ptr<Instruction>>& fromRename,
       std::vector<PipelineBuffer<std::shared_ptr<Instruction>>>& issuePorts,
       const RegisterFileSet& registerFileSet, PortAllocator& portAllocator,
-      const std::vector<uint16_t>& physicalRegisterStructure,
-      ryml::ConstNodeRef config = config::SimInfo::getConfig());
+      const std::vector<uint16_t>& physicalRegisterStructure);
 
   /** Ticks the dispatch/issue unit. Reads available input operands for
    * instructions and sets scoreboard flags for destination registers. */
@@ -74,8 +74,15 @@ class DispatchIssueUnit {
   void forwardOperands(const span<Register>& destinations,
                        const span<RegisterValue>& values);
 
+  /** Set the scoreboard entry for the provided register as ready. */
+  void setRegisterReady(Register reg);
+
   /** Clear the RS of all flushed instructions. */
   void purgeFlushed();
+
+  /** Flush scoreboard, dependancyMatrix. Primarily used for context
+   * switching. */
+  void flush();
 
   /** Retrieve the number of cycles this unit stalled due to insufficient RS
    * space. */
@@ -94,7 +101,7 @@ class DispatchIssueUnit {
   uint64_t getPortBusyStalls() const;
 
   /** Retrieve the current sizes and capacities of the reservation stations*/
-  void getRSSizes(std::vector<uint32_t>&) const;
+  void getRSSizes(std::vector<uint64_t>&) const;
 
  private:
   /** A buffer of instructions to dispatch and read operands for. */

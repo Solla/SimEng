@@ -1,18 +1,16 @@
 #pragma once
 
 #include <vector>
-#include <functional>
 
-#include "simeng/memory/MemoryInterface.hh"
+#include "simeng/MemoryInterface.hh"
+#include "simeng/memory/MMU.hh"
 
 namespace simeng {
-
-namespace memory {
 
 /** A memory interface to a flat memory system. */
 class FlatMemoryInterface : public MemoryInterface {
  public:
-  FlatMemoryInterface(char* memory, size_t size, std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator = nullptr);
+  FlatMemoryInterface(std::shared_ptr<memory::MMU> mmu);
 
   /** Request a read from the supplied target location.
    *
@@ -30,22 +28,18 @@ class FlatMemoryInterface : public MemoryInterface {
   /** Clear the completed reads. */
   void clearCompletedReads() override;
 
-  /** Returns true if there are any outstanding memory requests in-flight. */
+  /** Returns true if there are any oustanding memory requests in-flight. */
   bool hasPendingRequests() const override;
 
   /** Tick: do nothing */
   void tick() override;
 
  private:
-  /** The array representing the flat memory system to access. */
-  char* memory_;
-  /** The size of accessible memory. */
-  size_t size_;
+  /**  Shared pointer to the Core MMU */
+  std::shared_ptr<simeng::memory::MMU> mmu_;
+
   /** A vector containing all completed read requests. */
   std::vector<MemoryReadResult> completedReads_;
-  /** Virtual Address Translator */
-  std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator_;
 };
 
-}  // namespace memory
 }  // namespace simeng

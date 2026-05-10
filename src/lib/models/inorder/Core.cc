@@ -9,24 +9,23 @@ namespace simeng {
 namespace models {
 namespace inorder {
 
-Core::Core(memory::MemoryInterface& instructionMemory,
-           memory::MemoryInterface& dataMemory, uint64_t processMemorySize,
-           uint64_t entryPoint, const arch::Architecture& isa,
-           BranchPredictor& branchPredictor)
-    : simeng::Core(dataMemory, isa, config::SimInfo::getArchRegStruct()),
+// TODO: Replace with config options
+const unsigned int blockSize = 16;
+
+Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
+           const arch::Architecture& isa, BranchPredictor& branchPredictor,
+           std::shared_ptr<memory::MMU> mmu,
+           arch::sendSyscallToHandler handleSyscall)
+    : dataMemory_(dataMemory),
+      mmu_(mmu),
+      isa_(isa),
+      registerFileSet_(isa.getRegisterFileStructures()),
       architecturalRegisterFileSet_(registerFileSet_),
       fetchToDecodeBuffer_(1, {}),
       decodeToExecuteBuffer_(1, nullptr),
       completionSlots_(1, {1, nullptr}),
-      fetchUnit_(fetchToDecodeBuffer_, instructionMemory, processMemorySize,
-                 entryPoint,
-                 config::SimInfo::getConfig()["Fetch"]["Fetch-Block-Size"]
-                     .as<uint16_t>(),
-                 isa, branchPredictor,
-                 config::SimInfo::getConfig()["Fetch"]["MOP-Queue-Size"]
-                     .as<uint16_t>(),
-                 config::SimInfo::getConfig()["Fetch"]["MOP-Cache-Tag-Bits"]
-                     .as<uint16_t>()),
+      fetchUnit_(fetchToDecodeBuffer_, instructionMemory, blockSize, isa,
+                 branchPredictor),
       decodeUnit_(fetchToDecodeBuffer_, decodeToExecuteBuffer_,
                   branchPredictor),
       executeUnit_(
@@ -34,21 +33,49 @@ Core::Core(memory::MemoryInterface& instructionMemory,
           [this](auto regs, auto values) { forwardOperands(regs, values); },
           [this](auto instruction) { handleLoad(instruction); },
           [this](auto instruction) { storeData(instruction); },
-          [this](auto instruction) { raiseException(instruction); }, false),
-      writebackUnit_(completionSlots_, registerFileSet_, [](auto insnId) {}) {
-  // Query and apply initial state
-  auto state = isa.getInitialState();
-  applyStateChange(state);
+          [this](auto instruction) { raiseException(instruction); },
+          branchPredictor, false),
+      writebackUnit_(completionSlots_, registerFileSet_, [](auto insnId) {}),
+      handleSyscall_(handleSyscall) {
+  // Create exception handler based on chosen architecture
+  exceptionHandlerFactory(Config::get()["Core"]["ISA"].as<std::string>());
 }
 
 void Core::tick() {
-  if (hasHalted_) return;
-
   ticks_++;
   isa_.updateSystemTimerRegisters(&registerFileSet_, ticks_);
 
-  if (exceptionHandler_ != nullptr) {
-    processExceptionHandler();
+  switch (status_) {
+    case CoreStatus::idle:
+      idle_ticks_++;
+      return;
+    case CoreStatus::switching: {
+      // Ensure the pipeline is empty and there's no active exception before
+      // context switching.
+      if (fetchToDecodeBuffer_.isEmpty() && decodeToExecuteBuffer_.isEmpty() &&
+          executeUnit_.isEmpty() && completionSlots_[0].isEmpty() &&
+          (exceptionGenerated_ == false)) {
+        // Flush pipeline
+        fetchUnit_.flushLoopBuffer();
+        decodeUnit_.purgeFlushed();
+        executeUnit_.flush();
+        previousAddresses_ = std::queue<simeng::MemoryAccessTarget>();
+        status_ = CoreStatus::idle;
+        return;
+      }
+      break;
+    }
+    case CoreStatus::halted:
+      return;
+    default:
+      break;
+  }
+
+  // Increase tick count for current process execution
+  procTicks_++;
+
+  if (exceptionGenerated_) {
+    processException();
     return;
   }
 
@@ -78,6 +105,7 @@ void Core::tick() {
 
   if (exceptionGenerated_) {
     handleException();
+    fetchUnit_.requestFromPC();
     return;
   }
 
@@ -87,6 +115,7 @@ void Core::tick() {
     // Update PC and wipe younger buffers (Fetch/Decode, Decode/Execute)
     auto targetAddress = executeUnit_.getFlushAddress();
 
+    fetchUnit_.flushLoopBuffer();
     fetchUnit_.updatePC(targetAddress);
     fetchToDecodeBuffer_.fill({});
     decodeToExecuteBuffer_.fill(nullptr);
@@ -98,45 +127,35 @@ void Core::tick() {
     // Update PC and wipe Fetch/Decode buffer.
     auto targetAddress = decodeUnit_.getFlushAddress();
 
+    fetchUnit_.flushLoopBuffer();
     fetchUnit_.updatePC(targetAddress);
     fetchToDecodeBuffer_.fill({});
 
     flushes_++;
   }
 
-  isa_.updateSystemTimerRegisters(&registerFileSet_, ticks_);
   fetchUnit_.requestFromPC();
 }
 
-bool Core::hasHalted() const {
-  if (hasHalted_) {
-    return true;
-  }
+CoreStatus Core::getStatus() { return status_; }
 
-  // Core is considered to have halted when the fetch unit has halted, there
-  // are no uops pending in any buffer, the execute unit is not currently
-  // processing an instructions and no exception is currently being handled.
+void Core::setStatus(CoreStatus newStatus) { status_ = newStatus; }
 
-  // Units place uops in buffer tail, but if buffer is stalled, uops do not
-  // move to head slots and so remain in tail slots. Buffer head appears
-  // empty. Check emptiness accordingly
-  auto decSlots = fetchToDecodeBuffer_.getPendingSlots()[0];
-  bool decodePending = decSlots.size() > 0;
+uint64_t Core::getCurrentTID() const { return currentTID_; }
 
-  auto exeSlots = decodeToExecuteBuffer_.getPendingSlots()[0];
-  bool executePending = exeSlots != nullptr;
-
-  auto writeSlots = completionSlots_[0].getPendingSlots()[0];
-  bool writebackPending = writeSlots != nullptr;
-
-  return (fetchUnit_.hasHalted() && !decodePending && !writebackPending &&
-          !executePending && executeUnit_.isEmpty() &&
-          exceptionHandler_ == nullptr);
-}
+uint64_t Core::getCoreId() const { return coreId_; }
 
 const ArchitecturalRegisterFileSet& Core::getArchitecturalRegisterFileSet()
     const {
   return architecturalRegisterFileSet_;
+}
+
+void Core::sendSyscall(OS::SyscallInfo syscallInfo) const {
+  handleSyscall_(syscallInfo);
+}
+
+void Core::receiveSyscallResult(const OS::SyscallResult result) const {
+  exceptionHandler_->processSyscallResult(result);
 }
 
 uint64_t Core::getInstructionsRetiredCount() const {
@@ -149,12 +168,25 @@ std::map<std::string, std::string> Core::getStats() const {
   std::ostringstream ipcStr;
   ipcStr << std::setprecision(2) << ipc;
 
-  return {
-      {"cycles", std::to_string(ticks_)},
-      {"retired", std::to_string(retired)},
-      {"ipc", ipcStr.str()},
-      {"flushes", std::to_string(flushes_)},
-  };
+  // Sum up the branch stats reported across the execution units.
+  uint64_t totalBranchesExecuted = 0;
+  uint64_t totalBranchMispredicts = 0;
+  totalBranchesExecuted += executeUnit_.getBranchExecutedCount();
+  totalBranchMispredicts += executeUnit_.getBranchMispredictedCount();
+  auto branchMissRate = 100.0f * static_cast<float>(totalBranchMispredicts) /
+                        static_cast<float>(totalBranchesExecuted);
+  std::ostringstream branchMissRateStr;
+  branchMissRateStr << std::setprecision(3) << branchMissRate << "%";
+
+  return {{"cycles", std::to_string(ticks_)},
+          {"retired", std::to_string(retired)},
+          {"ipc", ipcStr.str()},
+          {"flushes", std::to_string(flushes_)},
+          {"branch.executed", std::to_string(totalBranchesExecuted)},
+          {"branch.mispredict", std::to_string(totalBranchMispredicts)},
+          {"branch.missrate", branchMissRateStr.str()},
+          {"idle.ticks", std::to_string(idle_ticks_)},
+          {"context.switches", std::to_string(contextSwitches_)}};
 }
 
 void Core::raiseException(const std::shared_ptr<Instruction>& instruction) {
@@ -163,12 +195,8 @@ void Core::raiseException(const std::shared_ptr<Instruction>& instruction) {
 }
 
 void Core::handleException() {
-  exceptionGenerated_ = false;
-
-  exceptionHandler_ =
-      isa_.handleException(exceptionGeneratingInstruction_, *this, dataMemory_);
-
-  processExceptionHandler();
+  exceptionHandler_->registerException(exceptionGeneratingInstruction_);
+  processException();
 
   // Flush pipeline
   fetchToDecodeBuffer_.fill({});
@@ -177,9 +205,10 @@ void Core::handleException() {
   completionSlots_[0].fill(nullptr);
 }
 
-void Core::processExceptionHandler() {
-  assert(exceptionHandler_ != nullptr &&
-         "Attempted to process an exception handler that wasn't present");
+void Core::processException() {
+  assert(exceptionGenerated_ != false &&
+         "[SimEng:Core] Attempted to process an exception handler that wasn't "
+         "active");
   if (dataMemory_.hasPendingRequests()) {
     // Must wait for all memory requests to complete before processing the
     // exception
@@ -195,27 +224,23 @@ void Core::processExceptionHandler() {
   const auto& result = exceptionHandler_->getResult();
 
   if (result.fatal) {
-    hasHalted_ = true;
+    status_ = CoreStatus::halted;
     std::cout << "[SimEng:Core] Halting due to fatal exception" << std::endl;
   } else {
+    fetchUnit_.flushLoopBuffer();
     fetchUnit_.updatePC(result.instructionAddress);
     applyStateChange(result.stateChange);
+    if (result.idleAfterSyscall) {
+      // Ensure pipeline is flushed
+      executeUnit_.flush();
+      previousAddresses_ = std::queue<simeng::MemoryAccessTarget>();
+      // Update core status
+      status_ = CoreStatus::idle;
+      contextSwitches_++;
+    }
   }
 
-  exceptionHandler_ = nullptr;
-}
-
-void Core::handleLoad(const std::shared_ptr<Instruction>& instruction) {
-  loadData(instruction);
-  if (instruction->exceptionEncountered()) {
-    raiseException(instruction);
-    return;
-  }
-
-  forwardOperands(instruction->getDestinationRegisters(),
-                  instruction->getResults());
-  // Manually add the instruction to the writeback input buffer
-  completionSlots_[0].getTailSlots()[0] = instruction;
+  exceptionGenerated_ = false;
 }
 
 void Core::loadData(const std::shared_ptr<Instruction>& instruction) {
@@ -231,7 +256,7 @@ void Core::loadData(const std::shared_ptr<Instruction>& instruction) {
   }
 
   assert(instruction->hasAllData() &&
-         "Load instruction failed to obtain all data this cycle");
+         "[SimEng:Core] Load instruction failed to obtain all data this cycle");
 
   instruction->execute();
 
@@ -259,14 +284,14 @@ void Core::storeData(const std::shared_ptr<Instruction>& instruction) {
 void Core::forwardOperands(const span<Register>& registers,
                            const span<RegisterValue>& values) {
   assert(registers.size() == values.size() &&
-         "Mismatched register and value vector sizes");
+         "[SimEng:Core] Mismatched register and value vector sizes");
 
   const auto& uop = decodeToExecuteBuffer_.getTailSlots()[0];
   if (uop == nullptr) {
     return;
   }
 
-  auto sourceRegisters = uop->getSourceRegisters();
+  auto sourceRegisters = uop->getOperandRegisters();
   for (size_t i = 0; i < registers.size(); i++) {
     // Check each forwarded register vs source operands and supply for each
     // match
@@ -295,13 +320,124 @@ void Core::readRegisters() {
 
   // Register read
   // Identify missing registers and supply values
-  const auto& sourceRegisters = uop->getSourceRegisters();
+  const auto& sourceRegisters = uop->getOperandRegisters();
   for (size_t i = 0; i < sourceRegisters.size(); i++) {
     const auto& reg = sourceRegisters[i];
     if (!uop->isOperandReady(i)) {
       uop->supplyOperand(i, registerFileSet_.get(reg));
     }
   }
+}
+
+void Core::applyStateChange(const OS::ProcessStateChange& change) {
+  // Update registers in accoradance with the ProcessStateChange type
+  switch (change.type) {
+    case OS::ChangeType::INCREMENT: {
+      for (size_t i = 0; i < change.modifiedRegisters.size(); i++) {
+        registerFileSet_.set(
+            change.modifiedRegisters[i],
+            registerFileSet_.get(change.modifiedRegisters[i]).get<uint64_t>() +
+                change.modifiedRegisterValues[i].get<uint64_t>());
+      }
+      break;
+    }
+    case OS::ChangeType::DECREMENT: {
+      for (size_t i = 0; i < change.modifiedRegisters.size(); i++) {
+        registerFileSet_.set(
+            change.modifiedRegisters[i],
+            registerFileSet_.get(change.modifiedRegisters[i]).get<uint64_t>() -
+                change.modifiedRegisterValues[i].get<uint64_t>());
+      }
+      break;
+    }
+    default: {  // OS::ChangeType::REPLACEMENT
+      // If type is ChangeType::REPLACEMENT, set new values
+      for (size_t i = 0; i < change.modifiedRegisters.size(); i++) {
+        registerFileSet_.set(change.modifiedRegisters[i],
+                             change.modifiedRegisterValues[i]);
+      }
+      break;
+    }
+  }
+
+  // Update memory
+  // TODO: Analyse if ChangeType::INCREMENT or ChangeType::DECREMENT case is
+  // required for memory changes
+  for (size_t i = 0; i < change.memoryAddresses.size(); i++) {
+    dataMemory_.requestWrite(change.memoryAddresses[i],
+                             change.memoryAddressValues[i]);
+  }
+}
+
+void Core::handleLoad(const std::shared_ptr<Instruction>& instruction) {
+  loadData(instruction);
+  if (instruction->exceptionEncountered()) {
+    raiseException(instruction);
+    return;
+  }
+
+  forwardOperands(instruction->getDestinationRegisters(),
+                  instruction->getResults());
+  // Manually add the instruction to the writeback input buffer
+  completionSlots_[0].getTailSlots()[0] = instruction;
+}
+
+void Core::schedule(simeng::OS::cpuContext newContext) {
+  currentTID_ = newContext.TID;
+  fetchUnit_.setProgramLength(newContext.progByteLen);
+  fetchUnit_.updatePC(newContext.pc);
+  for (size_t type = 0; type < newContext.regFile.size(); type++) {
+    for (size_t tag = 0; tag < newContext.regFile[type].size(); tag++) {
+      registerFileSet_.set({(uint8_t)type, (uint16_t)tag},
+                           newContext.regFile[type][tag]);
+    }
+  }
+  status_ = CoreStatus::executing;
+  procTicks_ = 0;
+  isa_.updateAfterContextSwitch(newContext);
+  mmu_->setTid(currentTID_);
+  // Allow fetch unit to resume fetching instructions & incrementing PC
+  fetchUnit_.unpause();
+}
+
+bool Core::interrupt() {
+  if (exceptionGenerated_ == false) {
+    status_ = CoreStatus::switching;
+    contextSwitches_++;
+    // Stop fetch unit from incrementing PC or fetching next instructions
+    // (also flushes loop buffer and any pending completed reads).
+    fetchUnit_.pause();
+    return true;
+  }
+  return false;
+}
+
+uint64_t Core::getCurrentProcTicks() const { return procTicks_; }
+
+simeng::OS::cpuContext Core::getCurrentContext() const {
+  OS::cpuContext newContext;
+  newContext.TID = currentTID_;
+  newContext.pc =
+      exceptionGenerated_
+          ? exceptionGeneratingInstruction_->getInstructionAddress() + 4
+          : fetchUnit_.getPC();
+  // progByteLen will not change in process so do not need to set it
+  // Don't need to explicitly save SP as will be in reg file contents
+  auto regFileStruc = isa_.getRegisterFileStructures();
+  newContext.regFile.resize(regFileStruc.size());
+  for (size_t i = 0; i < regFileStruc.size(); i++) {
+    newContext.regFile[i].resize(regFileStruc[i].quantity);
+  }
+  // Set all reg Values
+  for (size_t type = 0; type < newContext.regFile.size(); type++) {
+    for (size_t tag = 0; tag < newContext.regFile[type].size(); tag++) {
+      newContext.regFile[type][tag] =
+          registerFileSet_.get({(uint8_t)type, (uint16_t)tag});
+    }
+  }
+  // Do not need to explicitly set newContext.sp as it will be included in
+  // regFile
+  return newContext;
 }
 
 }  // namespace inorder

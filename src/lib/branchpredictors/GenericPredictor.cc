@@ -1,55 +1,50 @@
-#include "simeng/branchpredictors/GenericPredictor.hh"
+#include "simeng/GenericPredictor.hh"
 
 #include <iostream>
 
 namespace simeng {
 
-GenericPredictor::GenericPredictor(ryml::ConstNodeRef config)
-    : btbBits_(config["Branch-Predictor"]["BTB-Tag-Bits"].as<uint8_t>()),
-      satCntBits_(
-          config["Branch-Predictor"]["Saturating-Count-Bits"].as<uint8_t>()),
-      globalHistoryLength_(
-          config["Branch-Predictor"]["Global-History-Length"].as<uint16_t>()),
-      rasSize_(config["Branch-Predictor"]["RAS-entries"].as<uint16_t>()) {
-  // Calculate the saturation counter boundary between weakly taken and
-  // not-taken. `(2 ^ num_sat_cnt_bits) / 2` gives the weakly taken state
-  // value
-  uint8_t weaklyTaken = 1 << (satCntBits_ - 1);
-  uint8_t satCntVal = (config["Branch-Predictor"]["Fallback-Static-Predictor"]
-                           .as<std::string>() == "Always-Taken")
-                          ? weaklyTaken
-                          : (weaklyTaken - 1);
-  // Create branch prediction structures
-  btb_ =
-      std::vector<std::pair<uint8_t, uint64_t>>(1 << btbBits_, {satCntVal, 0});
+GenericPredictor::GenericPredictor() {
+  YAML::Node& config = Config::get();
+  btbBits_ = config["Branch-Predictor"]["BTB-Tag-Bits"].as<uint64_t>();
+  btb_ = std::vector<std::pair<uint8_t, uint64_t>>(
+      1 << btbBits_,
+      {config["Branch-Predictor"]["Fallback-Static-Predictor"].as<uint16_t>(),
+       0});
+  satCntBits_ =
+      config["Branch-Predictor"]["Saturating-Count-Bits"].as<uint64_t>();
+  globalHistoryLength_ =
+      config["Branch-Predictor"]["Global-History-Length"].as<uint64_t>();
+  rasSize_ = config["Branch-Predictor"]["RAS-entries"].as<uint64_t>();
   // Alter globalHistoryLength_ value to better suit required format in update()
-  globalHistoryLength_ = (1 << (globalHistoryLength_ * 2)) - 1;
+  globalHistoryLength_ = (1 << globalHistoryLength_) - 1;
 }
 
 GenericPredictor::~GenericPredictor() {
   btb_.clear();
   ras_.clear();
   rasHistory_.clear();
-  FTQ_.clear();
 }
 
 BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
                                            int64_t knownOffset) {
   // Get index via an XOR hash between the global history and the lower btbBits_
   // bits of the instruction address
-  uint64_t hashedIndex = (address ^ globalHistory_) & ((1 << btbBits_) - 1);
+  uint64_t hashedIndex = (address & ((1 << btbBits_) - 1)) ^ globalHistory_;
+  btbHistory_[address] = hashedIndex;
 
   // Get prediction from BTB
-  bool direction = btb_[hashedIndex].first >= (1 << (satCntBits_ - 1));
+  bool direction =
+      btb_[hashedIndex].first < (1 << (satCntBits_ - 1)) ? false : true;
   uint64_t target =
       (knownOffset != 0) ? address + knownOffset : btb_[hashedIndex].second;
   BranchPrediction prediction = {direction, target};
 
-  // Amend prediction based on branch type
+  // Ammend prediction based on branch type
   if (type == BranchType::Unconditional) {
-    prediction.isTaken = true;
+    prediction.taken = true;
   } else if (type == BranchType::Return) {
-    prediction.isTaken = true;
+    prediction.taken = true;
     // Return branches can use the RAS if an entry is available
     if (ras_.size() > 0) {
       prediction.target = ras_.back();
@@ -58,7 +53,7 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
       ras_.pop_back();
     }
   } else if (type == BranchType::SubroutineCall) {
-    prediction.isTaken = true;
+    prediction.taken = true;
     // Subroutine call branches must push their associated return address to RAS
     if (ras_.size() >= rasSize_) {
       ras_.pop_front();
@@ -67,26 +62,15 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
     // Record that this address is a branch-and-link instruction
     rasHistory_[address] = 0;
   } else if (type == BranchType::Conditional) {
-    if (!prediction.isTaken) prediction.target = address + 4;
+    if (!prediction.taken) prediction.target = address + 4;
   }
-
-  // Store the hashed index for correct hashing in update()
-  FTQ_.emplace_back(prediction.isTaken, hashedIndex);
-
-  // Speculatively update the global history
-  globalHistory_ =
-      ((globalHistory_ << 1) | prediction.isTaken) & globalHistoryLength_;
-
   return prediction;
 }
 
 void GenericPredictor::update(uint64_t address, bool taken,
-                              uint64_t targetAddress, BranchType type,
-                              uint64_t instructionId) {
-  // Get previous prediciton and index calculated from the FTQ
-  bool prevPrediction = FTQ_.front().first;
-  uint64_t hashedIndex = FTQ_.front().second;
-  FTQ_.pop_front();
+                              uint64_t targetAddress, BranchType type) {
+  // Get previous index calculated for the instruction address supplied
+  uint64_t hashedIndex = btbHistory_[address];
 
   // Calculate 2-bit saturating counter value
   uint8_t satCntVal = btb_[hashedIndex].first;
@@ -99,12 +83,9 @@ void GenericPredictor::update(uint64_t address, bool taken,
   // Update BTB entry
   btb_[hashedIndex] = {satCntVal, targetAddress};
 
-  // Update global history if prediction was incorrect
-  if (prevPrediction != taken) {
-    // Bit-flip the global history bit corresponding to this prediction
-    // We know how many predictions there have since been by the size of the FTQ
-    globalHistory_ ^= (1 << (FTQ_.size()));
-  }
+  // Update global history value with new direction
+  globalHistory_ = ((globalHistory_ << 1) | taken) & globalHistoryLength_;
+  return;
 }
 
 void GenericPredictor::flush(uint64_t address) {
@@ -128,20 +109,6 @@ void GenericPredictor::flush(uint64_t address) {
     }
     rasHistory_.erase(it);
   }
-
-  // If possible, pop instruction from FTQ
-  FTQ_.pop_back();
-
-  // Roll back global history
-  globalHistory_ >>= 1;
-}
-
-void GenericPredictor::addToFTQ(uint64_t address, bool taken) {
-  // Make the hashed index and add it to the FTQ
-  uint64_t hashedIndex = (address ^ globalHistory_) & ((1 << btbBits_) - 1);
-  FTQ_.emplace_back(taken, hashedIndex);
-  // Speculatively update the global history
-  globalHistory_ = ((globalHistory_ << 1) | taken) & globalHistoryLength_;
 }
 
 }  // namespace simeng

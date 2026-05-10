@@ -4,165 +4,272 @@ namespace simeng {
 namespace pipeline {
 
 FetchUnit::FetchUnit(PipelineBuffer<MacroOp>& output,
-                     memory::MemoryInterface& instructionMemory,
-                     uint64_t programByteLength, uint64_t entryPoint,
-                     uint16_t blockSize, const arch::Architecture& isa,
-                     BranchPredictor& branchPredictor, uint16_t mopQueueSize,
-                     uint8_t mopCacheTagBits)
+                     MemoryInterface& instructionMemory, uint8_t blockSize,
+                     const arch::Architecture& isa,
+                     BranchPredictor& branchPredictor)
     : output_(output),
-      pc_(entryPoint),
       instructionMemory_(instructionMemory),
-      programByteLength_(programByteLength),
       isa_(isa),
       branchPredictor_(branchPredictor),
-      mopQueueSize_(mopQueueSize),
-      mopCacheTagBits_(mopCacheTagBits),
       blockSize_(blockSize),
       blockMask_(~(blockSize_ - 1)) {
   assert(blockSize_ >= isa_.getMaxInstructionSize() &&
          "fetch block size must be larger than the largest instruction");
-  mopCache_ = std::vector<std::pair<uint64_t, uint64_t>>(
-      static_cast<uint64_t>(1 << mopCacheTagBits_), {0ull, ~0ull});
-
-  uint64_t blockAddress = pc_ & blockMask_;
-  instructionMemory_.requestRead({blockAddress, blockSize_});
-  requestedBlocks_.push_back(blockAddress);
+  fetchBuffer_ = new uint8_t[2 * blockSize_];
 }
 
-FetchUnit::~FetchUnit() {}
-
-void FetchUnit::requestFromPC() {
-  uint64_t blockAddress = pc_ & blockMask_;
-  auto it = std::find(requestedBlocks_.begin(), requestedBlocks_.end(),
-                      blockAddress);
-  if (it == requestedBlocks_.end()) {
-    instructionMemory_.requestRead({blockAddress, blockSize_});
-    requestedBlocks_.push_back(blockAddress);
-  }
-}
+FetchUnit::~FetchUnit() { delete[] fetchBuffer_; }
 
 void FetchUnit::tick() {
-  if (output_.isStalled()) {
+  if (programByteLength_ == 0) {
+    std::cerr
+        << "[SimEng::FetchUnit] Invalid Program Byte Length of 0. Please "
+           "ensure setProgramLength() is called before calling updatePC().\n";
+    exit(1);
+  }
+
+  if (output_.isStalled() || hasHalted_ || paused_) {
     return;
   }
 
-  if (hasHalted_) {
+  // If loop buffer has been filled, fill buffer to decode
+  if (loopBufferState_ == LoopBufferState::SUPPLYING) {
+    auto outputSlots = output_.getTailSlots();
+    for (size_t slot = 0; slot < output_.getWidth(); slot++) {
+      auto& macroOp = outputSlots[slot];
+      auto bytesRead = isa_.predecode(&(loopBuffer_.front().encoding),
+                                      loopBuffer_.front().instructionSize,
+                                      loopBuffer_.front().address, macroOp);
+
+      assert(bytesRead != 0 && "predecode failure for loop buffer entry");
+
+      // Set prediction to recorded value during loop buffer filling
+      if (macroOp[0]->isBranch()) {
+        macroOp[0]->setBranchPrediction(loopBuffer_.front().prediction);
+      }
+
+      // Cycle queue by moving front entry to back
+      loopBuffer_.push_back(loopBuffer_.front());
+      loopBuffer_.pop_front();
+      // Update PC to address of next instruction in buffer to maintain correct
+      // PC value
+      pc_ = loopBuffer_.front().address;
+    }
     return;
   }
 
-  // Get any instruction memory reads
-  const auto& fetched = instructionMemory_.getCompletedReads();
+  // Pointer to the instruction data to decode from
+  const uint8_t* buffer;
+  uint8_t bufferOffset;
 
-  // Check if any fetched instruction blocks have registered requests
-  for (const auto& blk : fetched) {
-    // If the block has been requested, pre-decode all possible instructions
-    // in block
-    const uint8_t* fetchData = blk.data.getAsVector<uint8_t>();
-    uint16_t dataOffset = 0;
-    uint64_t address = blk.target.address;
-
-    uint16_t minStep = std::max<uint16_t>(isa_.getMinInstructionSize(), 1);
-    while (dataOffset < blk.target.size) {
-      // Get mop cache index
-      uint64_t cacheIndex = address & ((1 << mopCacheTagBits_) - 1);
-      memcpy(&mopCache_[cacheIndex].first, (fetchData + dataOffset),
-             std::min<uint16_t>(blk.target.size - dataOffset, 4));
-      mopCache_[cacheIndex].second = address;
-
-      // Increment the offset and address
-      dataOffset += minStep;
-      address += static_cast<uint64_t>(minStep);
+  // Check if more instruction data is required
+  if (bufferedBytes_ < isa_.getMaxInstructionSize()) {
+    // Calculate the address of the next fetch block
+    uint64_t blockAddress;
+    if (bufferedBytes_ > 0) {
+      // There is already some data in the buffer, so check for the next block
+      bufferOffset = 0;
+      blockAddress = pc_ + bufferedBytes_;
+      assert((blockAddress & ~blockMask_) == 0 && "misaligned fetch buffer");
+    } else {
+      // Fetch buffer is empty, so start from the PC
+      blockAddress = pc_ & blockMask_;
+      bufferOffset = pc_ - blockAddress;
     }
-    auto it = std::find(requestedBlocks_.begin(), requestedBlocks_.end(),
-                        blk.target.address);
-    if (it != requestedBlocks_.end()) {
-      requestedBlocks_.erase(it);
-    }
-  }
-  instructionMemory_.clearCompletedReads();
 
-  // Determine if there's space in the mop queue
-  while (mopQueue_.size() < mopQueueSize_) {
-    // Determine if cached entry is correct
-    uint64_t cacheIndex = pc_ & ((1 << mopCacheTagBits_) - 1);
-    std::pair<uint64_t, uint64_t> cachedEntry = mopCache_[cacheIndex];
+    // Find fetched memory that matches the desired block
+    const auto& fetched = instructionMemory_.getCompletedReads();
 
-    if (cachedEntry.second == pc_) {
-      mopQueue_.push_back({});
-      auto& macroOp = mopQueue_.back();
-
-      // Calculate how many bytes are available in the current fetch block
-      uint64_t blockEnd = (pc_ & blockMask_) + blockSize_;
-      uint16_t bytesAvailable =
-          static_cast<uint16_t>(std::min<uint64_t>(4, blockEnd - pc_));
-
-      auto bytesRead = isa_.predecode(
-          reinterpret_cast<const uint8_t*>(&(cachedEntry.first)),
-          bytesAvailable, pc_, macroOp);
-
-      // If predecode fails, bail and wait for more data
-      if (bytesRead == 0) {
-        mopQueue_.pop_back();
+    size_t fetchIndex;
+    for (fetchIndex = 0; fetchIndex < fetched.size(); fetchIndex++) {
+      // A data null check "fetched[fetchIndex].data" is added to handle empty
+      // fetched instructions that are caused by incorrectly speculated branch
+      // instructions. Wrongly speculated branch instructions can sometimes
+      // generate addresses that have no mapping in the PageTable. This causes a
+      // page table fault which is handled by the OS. Since the address related
+      // to the branch instruction can be a garbage address to a region of
+      // memory which cannot be mapped, a data abort exception is thrown and an
+      // empty register value is returned as the read payload. A data null check
+      // suffices to catch these data aborts.
+      if (fetched[fetchIndex].target.address == blockAddress &&
+          fetched[fetchIndex].data) {
         break;
       }
+    }
+    if (fetchIndex == fetched.size()) {
+      // Need to wait for fetched instructions
+      return;
+    }
 
-      // Create branch prediction after identifying instruction type
-      // (e.g. RET, BL, etc).
-      BranchPrediction prediction = {false,
-                                     pc_ + static_cast<uint64_t>(bytesRead)};
-      if (macroOp.size() > 0) {
-        if (macroOp[0]->isBranch()) {
-          prediction = branchPredictor_.predict(
-              pc_, macroOp[0]->getBranchType(), macroOp[0]->getKnownOffset());
-          branchFetchedCount_++;
+    // TODO: Handle memory faults
+    const uint8_t* fetchData = fetched[fetchIndex].data.getAsVector<uint8_t>();
+
+    // Copy fetched data to fetch buffer after existing data
+    std::memcpy(fetchBuffer_ + bufferedBytes_, fetchData + bufferOffset,
+                blockSize_ - bufferOffset);
+
+    bufferedBytes_ += blockSize_ - bufferOffset;
+    buffer = fetchBuffer_;
+    // Decoding should start from the beginning of the fetchBuffer_.
+    bufferOffset = 0;
+  } else {
+    // There is already enough data in the fetch buffer, so use that
+    buffer = fetchBuffer_;
+    bufferOffset = 0;
+  }
+
+  // Check we have enough data to begin decoding
+  if (bufferedBytes_ < isa_.getMaxInstructionSize()) return;
+
+  auto outputSlots = output_.getTailSlots();
+  for (size_t slot = 0; slot < output_.getWidth(); slot++) {
+    auto& macroOp = outputSlots[slot];
+
+    auto bytesRead =
+        isa_.predecode(buffer + bufferOffset, bufferedBytes_, pc_, macroOp);
+
+    // If predecode fails, bail and wait for more data
+    if (bytesRead == 0) {
+      assert(bufferedBytes_ < isa_.getMaxInstructionSize() &&
+             "unexpected predecode failure");
+      break;
+    }
+
+    // Create branch prediction after identifing instruction type
+    // (e.g. RET, BL, etc).
+    BranchPrediction prediction = {false, 0};
+    if (macroOp[0]->isBranch()) {
+      prediction = branchPredictor_.predict(pc_, macroOp[0]->getBranchType(),
+                                            macroOp[0]->getKnownOffset());
+      macroOp[0]->setBranchPrediction(prediction);
+    }
+
+    if (loopBufferState_ == LoopBufferState::FILLING) {
+      // Record instruction fetch information in loop body
+      uint32_t encoding;
+      memcpy(&encoding, buffer + bufferOffset, sizeof(uint32_t));
+      loopBuffer_.push_back(
+          {encoding, bytesRead, pc_, macroOp[0]->getBranchPrediction()});
+
+      if (pc_ == loopBoundaryAddress_) {
+        if (macroOp[0]->isBranch() &&
+            !macroOp[0]->getBranchPrediction().taken) {
+          // loopBoundaryAddress_ has been fetched whilst filling the loop
+          // buffer BUT this is a branch, predicted to branch out of the loop
+          // being buffered. Stop filling the loop buffer and don't supply to
+          // decode
+          loopBufferState_ = LoopBufferState::IDLE;
+        } else {
+          // loopBoundaryAddress_ has been fetched whilst filling the loop
+          // buffer. Stop filling as loop body has been recorded and begin to
+          // supply decode unit with instructions from the loop buffer
+          loopBufferState_ = LoopBufferState::SUPPLYING;
+          bufferedBytes_ = 0;
+          break;
         }
-        macroOp[0]->setBranchPrediction(prediction);
       }
+    } else if (loopBufferState_ == LoopBufferState::WAITING &&
+               pc_ == loopBoundaryAddress_) {
+      // Once set loopBoundaryAddress_ is fetched, start to fill loop buffer
+      loopBufferState_ = LoopBufferState::FILLING;
+    }
 
-      // Update PC based on previous branch prediction
-      if (!prediction.isTaken) {
-        // Predicted as not taken; increment PC to next instruction
-        pc_ += bytesRead;
-      } else {
-        // Predicted as taken; set PC to predicted target address
-        pc_ = prediction.target;
-      }
-      // For dynamic linking, the PC can be very high (e.g. 0x4000...).
-      // Only halt if PC is within the lower 4GB and exceeds programByteLength_,
-      // or if it's explicitly 0.
-      hasHalted_ = (pc_ == 0) || (pc_ < 0x100000000ULL && pc_ >= programByteLength_);
+    assert(bytesRead <= bufferedBytes_ &&
+           "Predecode consumed more bytes than were available");
+    // Increment the offset, decrement available bytes
+    bufferOffset += bytesRead;
+    bufferedBytes_ -= bytesRead;
+
+    if (!prediction.taken) {
+      // Predicted as not taken; increment PC to next instruction
+      pc_ += bytesRead;
     } else {
-      // Request new block from instruction memory if there isn't an existing
-      // request
-      requestFromPC();
+      // Predicted as taken; set PC to predicted target address
+      pc_ = prediction.target;
+    }
+
+    if (pc_ >= programByteLength_) {
+      hasHalted_ = true;
+      break;
+    }
+
+    if (prediction.taken) {
+      if (slot + 1 < output_.getWidth()) {
+        branchStalls_++;
+      }
+      // Can't continue fetch immediately after a branch
+      bufferedBytes_ = 0;
+      break;
+    }
+
+    // Too few bytes remaining in buffer to continue
+    if (bufferedBytes_ == 0) {
       break;
     }
   }
 
-  // Send mops to decode unit up to the width of the buffer
-  uint16_t idx = 0;
-  while (mopQueue_.size() && idx < output_.getWidth()) {
-    output_.getTailSlots()[idx] = mopQueue_.front();
-    idx++;
-    mopQueue_.pop_front();
+  if (bufferedBytes_ > 0) {
+    // Move start of fetched data to beginning of fetch buffer
+    std::memmove(fetchBuffer_, buffer + bufferOffset, bufferedBytes_);
   }
+
+  instructionMemory_.clearCompletedReads();
+}
+
+void FetchUnit::registerLoopBoundary(uint64_t branchAddress) {
+  // Set branch which forms the loop as the loopBoundaryAddress_ and place loop
+  // buffer in state to begin filling once the loopBoundaryAddress_ has been
+  // fetched
+  loopBufferState_ = LoopBufferState::WAITING;
+  loopBoundaryAddress_ = branchAddress;
 }
 
 bool FetchUnit::hasHalted() const { return hasHalted_; }
 
 void FetchUnit::updatePC(uint64_t address) {
   pc_ = address;
-  requestedBlocks_.clear();
-  mopQueue_.clear();
-  hasHalted_ = (pc_ == 0) || (pc_ < 0x100000000ULL && pc_ >= programByteLength_);
+  bufferedBytes_ = 0;
+  if (programByteLength_ == 0) {
+    std::cerr
+        << "[SimEng::FetchUnit] Invalid Program Byte Length of 0. Please "
+           "ensure setProgramLength() is called before calling updatePC().\n";
+    exit(1);
+  }
+  hasHalted_ = (pc_ >= programByteLength_);
 }
 
-uint64_t FetchUnit::getPC() const { return pc_; }
+void FetchUnit::setProgramLength(uint64_t size) { programByteLength_ = size; }
+
+void FetchUnit::requestFromPC() {
+  // Do nothing if paused
+  if (paused_) return;
+
+  // Do nothing if buffer already contains enough data
+  if (bufferedBytes_ >= isa_.getMaxInstructionSize()) return;
+
+  // Do nothing if unit has halted to avoid invalid speculative memory reads
+  // beyond the programByteLength_
+  if (hasHalted_) return;
+
+  uint64_t blockAddress;
+  if (bufferedBytes_ > 0) {
+    // There's already some data in the buffer, so fetch the next block
+    blockAddress = pc_ + bufferedBytes_;
+    assert((blockAddress & ~blockMask_) == 0 && "misaligned fetch buffer");
+  } else {
+    // Fetch buffer is empty, so fetch from the PC
+    blockAddress = pc_ & blockMask_;
+  }
+
+  instructionMemory_.requestRead({blockAddress, blockSize_});
+}
 
 uint64_t FetchUnit::getBranchStalls() const { return branchStalls_; }
 
-uint64_t FetchUnit::getBranchFetchedCount() const {
-  return branchFetchedCount_;
+void FetchUnit::flushLoopBuffer() {
+  loopBuffer_.clear();
+  loopBufferState_ = LoopBufferState::IDLE;
+  loopBoundaryAddress_ = 0;
 }
 
 }  // namespace pipeline

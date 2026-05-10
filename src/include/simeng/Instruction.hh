@@ -204,6 +204,8 @@ class Instruction {
   /** Get arbitrary micro-operation index. */
   int getMicroOpIndex() const { return microOpIndex_; }
 
+  void virtual print() const {};
+
  protected:
   /** Set the accessed memory addresses, and create a corresponding memory data
    * vector. */

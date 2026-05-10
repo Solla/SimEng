@@ -26,8 +26,19 @@ set(SIMENG_SOURCES
     kernel/PageFrameAllocator.cc
     kernel/PageTable.cc
     kernel/Vma.cc
+    OS/MemRegion.cc
+    OS/Process.cc
+    OS/SimOS.cc
+    OS/SyscallHandler.cc
+    OS/Vma.cc
+    OS/FileDesc.cc
+    OS/PageFrameAllocator.cc
+    OS/PageTable.cc
     memory/FixedLatencyMemoryInterface.cc
     memory/FlatMemoryInterface.cc
+    memory/SimpleMem.cc
+    memory/Mem.cc
+    memory/MMU.cc
     models/emulation/Core.cc
     models/inorder/Core.cc
     models/outoforder/Core.cc
@@ -45,7 +56,6 @@ set(SIMENG_SOURCES
     pipeline/ReorderBuffer.cc
     pipeline/WritebackUnit.cc
     ArchitecturalRegisterFileSet.cc
-    CMakeLists.txt
     CoreInstance.cc
     Elf.cc
     RegisterFileSet.cc
@@ -62,7 +72,7 @@ set_target_properties(libsimeng PROPERTIES OUTPUT_NAME simeng)
 
 target_include_directories(libsimeng PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(libsimeng PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(libsimeng capstone)
+target_link_libraries(libsimeng capstone yaml-cpp elf)
 # Only enable compiler warnings for our code
 target_compile_options(libsimeng PRIVATE ${SIMENG_COMPILE_OPTIONS})
 

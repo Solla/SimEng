@@ -4,8 +4,8 @@
 #include <map>
 #include <vector>
 
-#include "simeng/branchpredictors/BranchPredictor.hh"
-#include "simeng/config/SimInfo.hh"
+#include "simeng/BranchPredictor.hh"
+#include "simeng/Config.hh"
 
 namespace simeng {
 
@@ -23,7 +23,7 @@ namespace simeng {
 class GenericPredictor : public BranchPredictor {
  public:
   /** Initialise predictor models. */
-  GenericPredictor(ryml::ConstNodeRef config = config::SimInfo::getConfig());
+  GenericPredictor();
   ~GenericPredictor();
 
   /** Generate a branch prediction for the supplied instruction address, a
@@ -35,34 +35,31 @@ class GenericPredictor : public BranchPredictor {
   /** Updates appropriate predictor model objects based on the address and
    * outcome of the branch instruction. */
   void update(uint64_t address, bool taken, uint64_t targetAddress,
-              BranchType type, uint64_t instructionId) override;
+              BranchType type) override;
 
   /** Provides RAS rewinding behaviour. */
   void flush(uint64_t address) override;
 
-  void addToFTQ(uint64_t address, bool taken) override;
-
  private:
   /** The bitlength of the BTB index; BTB will have 2^bits entries. */
-  uint8_t btbBits_;
+  uint64_t btbBits_;
 
   /** A 2^bits length vector of pairs containing a satCntBits_-bit saturating
    * counter and a branch target. */
   std::vector<std::pair<uint8_t, uint64_t>> btb_;
 
-  /** Fetch Target Queue containing the direction prediction and previous global
-   * history state of branches that are currently unresolved */
-  std::deque<std::pair<bool, uint64_t>> FTQ_;
+  /** The previous BTB index calculated for an address. */
+  std::map<uint64_t, uint64_t> btbHistory_;
 
   /** The number of bits used to form the saturating counter in a BTB entry. */
-  uint8_t satCntBits_;
+  uint64_t satCntBits_;
 
   /** A n-bit history of previous branch directions where n is equal to
    * globalHistoryLength_. */
   uint64_t globalHistory_ = 0;
 
   /** The number of previous branch directions recorded globally. */
-  uint16_t globalHistoryLength_;
+  uint64_t globalHistoryLength_;
 
   /** A return address stack. */
   std::deque<uint64_t> ras_;
@@ -73,7 +70,7 @@ class GenericPredictor : public BranchPredictor {
   std::map<uint64_t, uint64_t> rasHistory_;
 
   /** The size of the RAS. */
-  uint16_t rasSize_;
+  uint64_t rasSize_;
 };
 
 }  // namespace simeng

@@ -23,6 +23,7 @@ set(TEST_SOURCES
     pipeline/RenameUnitTest.cc
     pipeline/ReorderBufferTest.cc
     pipeline/WritebackUnitTest.cc
+<<<<<<< HEAD
     ArchitecturalRegisterFileSetTest.cc
     ElfTest.cc
     FixedLatencyMemoryInterfaceTest.cc
@@ -36,6 +37,23 @@ set(TEST_SOURCES
     PerceptronPredictorTest.cc
     SpecialFileDirGenTest.cc
     TAGEPredictorTest.cc
+=======
+    FileDescArrayTest.cc
+    GenericPredictorTest.cc
+    ISATest.cc
+    OSTest.cc
+    RegisterValueTest.cc
+    PoolTest.cc
+    ShiftValueTest.cc
+    LatencyMemoryInterfaceTest.cc
+    SimpleMem.cc
+    PageTableTest.cc
+    VmaTest.cc
+    HostBackedFileMMapsTest.cc
+    PageFrameAllocatorTest.cc
+    MemRegionTest.cc
+    ../testenv/FilesEnv.cc
+>>>>>>> origin/dynamic-linking-support
     )
 
 add_executable(unittests ${TEST_SOURCES})

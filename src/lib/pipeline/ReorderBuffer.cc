@@ -8,14 +8,19 @@ namespace simeng {
 namespace pipeline {
 
 ReorderBuffer::ReorderBuffer(
-    uint32_t maxSize, RegisterAliasTable& rat, LoadStoreQueue& lsq,
+    unsigned int maxSize, RegisterAliasTable& rat, LoadStoreQueue& lsq,
     std::function<void(const std::shared_ptr<Instruction>&)> raiseException,
-    BranchPredictor& predictor)
+    std::function<void(uint64_t branchAddress)> sendLoopBoundary,
+    BranchPredictor& predictor, uint16_t loopBufSize,
+    uint16_t loopDetectionThreshold)
     : rat_(rat),
       lsq_(lsq),
       maxSize_(maxSize),
       raiseException_(raiseException),
-      predictor_(predictor) {}
+      sendLoopBoundary_(sendLoopBoundary),
+      predictor_(predictor),
+      loopBufSize_(loopBufSize),
+      loopDetectionThreshold_(loopDetectionThreshold) {}
 
 void ReorderBuffer::reserve(const std::shared_ptr<Instruction>& insn) {
   assert(buffer_.size() < maxSize_ &&
@@ -31,20 +36,18 @@ void ReorderBuffer::reserve(const std::shared_ptr<Instruction>& insn) {
 void ReorderBuffer::commitMicroOps(uint64_t insnId) {
   if (buffer_.size()) {
     size_t index = 0;
-    uint64_t firstOp = UINT64_MAX;
+    int firstOp = -1;
     bool validForCommit = false;
-    bool foundFirstInstance = false;
 
     // Find first instance of uop belonging to macro-op instruction
     for (; index < buffer_.size(); index++) {
       if (buffer_[index]->getInstructionId() == insnId) {
         firstOp = index;
-        foundFirstInstance = true;
         break;
       }
     }
 
-    if (foundFirstInstance) {
+    if (firstOp > -1) {
       // If found, see if all uops are committable
       for (; index < buffer_.size(); index++) {
         if (buffer_[index]->getInstructionId() != insnId) break;
@@ -57,7 +60,6 @@ void ReorderBuffer::commitMicroOps(uint64_t insnId) {
       }
       if (!validForCommit) return;
 
-      assert(firstOp != UINT64_MAX && "firstOp hasn't been populated");
       // No early return thus all uops are committable
       for (; firstOp < buffer_.size(); firstOp++) {
         if (buffer_[firstOp]->getInstructionId() != insnId) break;
@@ -68,14 +70,14 @@ void ReorderBuffer::commitMicroOps(uint64_t insnId) {
   return;
 }
 
-unsigned int ReorderBuffer::commit(uint64_t maxCommitSize) {
+unsigned int ReorderBuffer::commit(unsigned int maxCommitSize) {
   shouldFlush_ = false;
   size_t maxCommits =
       std::min(static_cast<size_t>(maxCommitSize), buffer_.size());
 
   unsigned int n;
   for (n = 0; n < maxCommits; n++) {
-    auto& uop = buffer_[0];
+    auto& uop = buffer_.front();
     if (!uop->canCommit()) {
       break;
     }
@@ -89,7 +91,7 @@ unsigned int ReorderBuffer::commit(uint64_t maxCommitSize) {
     }
 
     const auto& destinations = uop->getDestinationRegisters();
-    for (size_t i = 0; i < destinations.size(); i++) {
+    for (int i = 0; i < destinations.size(); i++) {
       rat_.commit(destinations[i]);
     }
 
@@ -112,30 +114,56 @@ unsigned int ReorderBuffer::commit(uint64_t maxCommitSize) {
       }
     }
 
-    // Call isBranch() to satisfy unit test expectations of multiple calls
-    uop->isBranch();
+    // Increment or swap out branch counter for loop detection
     if (uop->isBranch()) {
-      retiredBranches_++;
-      if (uop->wasBranchMispredicted()) {
-        branchMispredicts_++;
-      }
-      predictor_.update(uop->getInstructionAddress(), uop->wasBranchTaken(),
-                        uop->getBranchAddress(), uop->getBranchType(),
-                        uop->getInstructionId());
-    }
+      if (!loopDetected_) {
+        bool increment = true;
+        if (branchCounter_.first.address != uop->getInstructionAddress()) {
+          // Mismatch on instruction address, reset
+          increment = false;
+        } else if (branchCounter_.first.outcome != uop->getBranchPrediction()) {
+          // Mismatch on branch outcome, reset
+          increment = false;
+        } else if ((instructionsCommitted_ -
+                    branchCounter_.first.commitNumber) > loopBufSize_) {
+          // Loop too big to fit in loop buffer, reset
+          increment = false;
+        }
 
+        if (increment) {
+          // Reset commitNumber value
+          branchCounter_.first.commitNumber = instructionsCommitted_;
+          // Increment counter
+          branchCounter_.second++;
+
+          if (branchCounter_.second > loopDetectionThreshold_) {
+            // If the same branch with the same outcome is sequentially retired
+            // more times than the loopDetectionThreshold_ value, identify as a
+            // loop boundary
+            loopDetected_ = true;
+            sendLoopBoundary_(uop->getInstructionAddress());
+          }
+        } else {
+          // Swap out latest branch
+          branchCounter_ = {
+              {uop->getInstructionAddress(), uop->getBranchPrediction(),
+               instructionsCommitted_},
+              0};
+        }
+      }
+    }
     buffer_.pop_front();
   }
 
   return n;
 }
 
-void ReorderBuffer::flush(uint64_t afterInsnId) {
+void ReorderBuffer::flush(uint64_t afterSeqId) {
   // Iterate backwards from the tail of the queue to find and remove ops newer
-  // than `afterInsnId`
+  // than `afterSeqId`
   while (!buffer_.empty()) {
     auto& uop = buffer_.back();
-    if (uop->getInstructionId() <= afterInsnId) {
+    if (uop->getInstructionId() <= afterSeqId) {
       break;
     }
 
@@ -144,8 +172,7 @@ void ReorderBuffer::flush(uint64_t afterInsnId) {
     auto destinations = uop->getDestinationRegisters();
     for (int i = destinations.size() - 1; i >= 0; i--) {
       const auto& reg = destinations[i];
-      // Only rewind the register if it was renamed
-      if (reg.renamed) rat_.rewind(reg);
+      rat_.rewind(reg);
     }
     uop->setFlushed();
     // If the instruction is a branch, supply address to branch flushing logic
@@ -154,6 +181,18 @@ void ReorderBuffer::flush(uint64_t afterInsnId) {
     }
     buffer_.pop_back();
   }
+
+  // Reset branch counter and loop detection
+  branchCounter_ = {{0, {false, 0}, 0}, 0};
+  loopDetected_ = false;
+}
+
+void ReorderBuffer::flush() {
+  buffer_ = std::deque<std::shared_ptr<Instruction>>();
+  shouldFlush_ = false;
+  // Reset branch counter and loop detection
+  branchCounter_ = {{0, {false, 0}, 0}, 0};
+  loopDetected_ = false;
 }
 
 unsigned int ReorderBuffer::size() const { return buffer_.size(); }
@@ -164,7 +203,7 @@ unsigned int ReorderBuffer::getFreeSpace() const {
 
 bool ReorderBuffer::shouldFlush() const { return shouldFlush_; }
 uint64_t ReorderBuffer::getFlushAddress() const { return pc_; }
-uint64_t ReorderBuffer::getFlushInsnId() const { return flushAfter_; }
+uint64_t ReorderBuffer::getFlushSeqId() const { return flushAfter_; }
 
 uint64_t ReorderBuffer::getInstructionsCommittedCount() const {
   return instructionsCommitted_;
@@ -174,12 +213,5 @@ uint64_t ReorderBuffer::getViolatingLoadsCount() const {
   return loadViolations_;
 }
 
-uint64_t ReorderBuffer::getBranchMispredictedCount() const {
-  return branchMispredicts_;
-}
-
-uint64_t ReorderBuffer::getRetiredBranchesCount() const {
-  return retiredBranches_;
-}
 }  // namespace pipeline
 }  // namespace simeng

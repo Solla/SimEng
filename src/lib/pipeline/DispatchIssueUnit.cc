@@ -10,14 +10,14 @@ DispatchIssueUnit::DispatchIssueUnit(
     PipelineBuffer<std::shared_ptr<Instruction>>& fromRename,
     std::vector<PipelineBuffer<std::shared_ptr<Instruction>>>& issuePorts,
     const RegisterFileSet& registerFileSet, PortAllocator& portAllocator,
-    const std::vector<uint16_t>& physicalRegisterStructure,
-    ryml::ConstNodeRef config)
+    const std::vector<uint16_t>& physicalRegisterStructure)
     : input_(fromRename),
       issuePorts_(issuePorts),
       registerFileSet_(registerFileSet),
       scoreboard_(physicalRegisterStructure.size()),
       dependencyMatrix_(physicalRegisterStructure.size()),
       portAllocator_(portAllocator) {
+  YAML::Node& config = Config::get();
   // Initialise scoreboard
   for (size_t type = 0; type < physicalRegisterStructure.size(); type++) {
     scoreboard_[type].assign(physicalRegisterStructure[type], true);
@@ -25,24 +25,23 @@ DispatchIssueUnit::DispatchIssueUnit(
   }
   // Create set of reservation station structs with correct issue port
   // mappings
-  for (size_t i = 0; i < config["Reservation-Stations"].num_children(); i++) {
+  for (size_t i = 0; i < config["Reservation-Stations"].size(); i++) {
     // Iterate over each reservation station in config
     auto reservation_station = config["Reservation-Stations"][i];
     // Create ReservationStation struct to be stored
     ReservationStation rs = {
-        reservation_station["Size"].as<uint32_t>(),
+        reservation_station["Size"].as<uint16_t>(),
         reservation_station["Dispatch-Rate"].as<uint16_t>(),
-        0ul,
+        0,
         {}};
     // Resize rs port attribute to match what's defined in config file
-    rs.ports.resize(reservation_station["Port-Nums"].num_children());
-    for (size_t j = 0; j < reservation_station["Port-Nums"].num_children();
-         j++) {
+    rs.ports.resize(reservation_station["Ports"].size());
+    for (size_t j = 0; j < reservation_station["Ports"].size(); j++) {
       // Iterate over issue ports in config
-      uint16_t issue_port = reservation_station["Port-Nums"][j].as<uint16_t>();
+      uint16_t issue_port = reservation_station["Ports"][j].as<uint16_t>();
       rs.ports[j].issuePort = issue_port;
       // Add port mapping entry, resizing vector if needed
-      if ((size_t)(issue_port + 1) > portMapping_.size()) {
+      if ((issue_port + 1) > portMapping_.size()) {
         portMapping_.resize((issue_port + 1));
       }
       portMapping_[issue_port] = {i, j};
@@ -67,48 +66,37 @@ void DispatchIssueUnit::tick() {
       continue;
     }
 
-    std::vector<uint16_t> supportedPorts = uop->getSupportedPorts();
+    const std::vector<uint16_t>& supportedPorts = uop->getSupportedPorts();
     if (uop->exceptionEncountered()) {
       // Exception; mark as ready to commit, and remove from pipeline
       uop->setCommitReady();
       input_.getHeadSlots()[slot] = nullptr;
       continue;
     }
-
-    // Loop through all ports and remove any who's RS is at capacity or dispatch
-    // rate has been met
-    auto portIt = supportedPorts.begin();
-    while (portIt != supportedPorts.end()) {
-      uint16_t RS_Index = portMapping_[*portIt].first;
-      ReservationStation* rs = &reservationStations_[RS_Index];
-      if (rs->currentSize == rs->capacity ||
-          dispatches_[RS_Index] == rs->dispatchRate) {
-        portIt = supportedPorts.erase(portIt);
-      } else {
-        portIt++;
-      }
-    }
-    // If no ports left, stall and return
-    if (supportedPorts.size() == 0) {
-      input_.stall(true);
-      rsStalls_++;
-      return;
-    }
-
-    // Find an available RS
+    // Allocate issue port to uop
     uint16_t port = portAllocator_.allocate(supportedPorts);
     uint16_t RS_Index = portMapping_[port].first;
     uint16_t RS_Port = portMapping_[port].second;
     assert(RS_Index < reservationStations_.size() &&
            "Allocated port inaccessible");
-    ReservationStation* rs = &reservationStations_[RS_Index];
+    ReservationStation& rs = reservationStations_[RS_Index];
+
+    // When appropriate, stall uop or input buffer if stall buffer full
+    if (rs.currentSize == rs.capacity ||
+        dispatches_[RS_Index] == rs.dispatchRate) {
+      // Deallocate port given
+      portAllocator_.deallocate(port);
+      input_.stall(true);
+      rsStalls_++;
+      return;
+    }
 
     // Assume the uop will be ready
     bool ready = true;
 
     // Register read
     // Identify remaining missing registers and supply values
-    auto& sourceRegisters = uop->getSourceRegisters();
+    auto& sourceRegisters = uop->getOperandRegisters();
     for (uint16_t i = 0; i < sourceRegisters.size(); i++) {
       const auto& reg = sourceRegisters[i];
 
@@ -134,10 +122,10 @@ void DispatchIssueUnit::tick() {
 
     // Increment dispatches made and RS occupied entries size
     dispatches_[RS_Index]++;
-    rs->currentSize++;
+    rs.currentSize++;
 
     if (ready) {
-      rs->ports[RS_Port].ready.push_back(std::move(uop));
+      rs.ports[RS_Port].ready.push_back(std::move(uop));
     }
 
     input_.getHeadSlots()[slot] = nullptr;
@@ -210,6 +198,10 @@ void DispatchIssueUnit::forwardOperands(const span<Register>& registers,
   }
 }
 
+void DispatchIssueUnit::setRegisterReady(Register reg) {
+  scoreboard_[reg.type][reg.tag] = true;
+}
+
 void DispatchIssueUnit::purgeFlushed() {
   for (size_t i = 0; i < reservationStations_.size(); i++) {
     // Search the ready queues for flushed instructions and remove them
@@ -268,9 +260,23 @@ uint64_t DispatchIssueUnit::getPortBusyStalls() const {
   return portBusyStalls_;
 }
 
-void DispatchIssueUnit::getRSSizes(std::vector<uint32_t>& sizes) const {
+void DispatchIssueUnit::getRSSizes(std::vector<uint64_t>& sizes) const {
   for (auto& rs : reservationStations_) {
     sizes.push_back(rs.capacity - rs.currentSize);
+  }
+}
+
+void DispatchIssueUnit::flush() {
+  for (size_t i = 0; i < scoreboard_.size(); i++) {
+    for (size_t j = 0; j < scoreboard_[i].size(); j++) {
+      scoreboard_[i][j] = true;
+    }
+  }
+
+  for (size_t i = 0; i < dependencyMatrix_.size(); i++) {
+    for (size_t j = 0; j < dependencyMatrix_[i].size(); j++) {
+      dependencyMatrix_[i][j].clear();
+    }
   }
 }
 

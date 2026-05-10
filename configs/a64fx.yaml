@@ -1,22 +1,27 @@
+---
 # The following resources where utilised to create the config file and naming schemes:
 # https://github.com/fujitsu/A64FX
 
 Core:
   ISA: AArch64
-  Simulation-Mode: outoforder
-  Clock-Frequency-GHz: 1.8
-  Timer-Frequency-MHz: 100
-  Micro-Operations: True
+  Simulation-Mode: emulation
+  # Clock Frequency is in GHz.
+  Clock-Frequency: 1.8
+  # Timer-Frequency is in MHz.
+  Timer-Frequency: 100
+  Micro-Operations: False
   Vector-Length: 512
 Fetch:
   Fetch-Block-Size: 32
-  MOP-Queue-Size: 2
-  MOP-Cache-Tag-Bits: 8
   Loop-Buffer-Size: 48
   Loop-Detection-Threshold: 4
 Process-Image:
+  Mmap-Size: 1073741824
   Heap-Size: 1073741824
   Stack-Size: 1048576
+Simulation-Memory:
+  # 2.5 GiB
+  Size: 2684354560
 Register-Set:
   GeneralPurpose-Count: 96
   FloatingPoint/SVE-Count: 128
@@ -30,20 +35,14 @@ Queue-Sizes:
   ROB: 128
   Load: 40
   Store: 24
-Port-Allocator:
-  Type: Balanced
 Branch-Predictor:
-  Type: "TAGE"
   BTB-Tag-Bits: 11
   Saturating-Count-Bits: 2
-  Global-History-Length: 19
+  Global-History-Length: 11
   RAS-entries: 8
   Fallback-Static-Predictor: "Always-Taken"
-  TAGE-Table-Bits: 12
-  Num-TAGE-Tables: 6
-  Tag-Length: 8
 L1-Data-Memory:
-  Interface-Type: Fixed
+  Interface-Type: Flat
 L1-Instruction-Memory:
   Interface-Type: Flat
 LSQ-L1-Interface:
@@ -57,317 +56,198 @@ LSQ-L1-Interface:
 Ports:
   0:
     Portname: FLA
-    Instruction-Group-Support:
-    - FP
-    - SVE
+    Instruction-Support:
+      - FP
+      - SVE
   1:
     Portname: PR
-    Instruction-Group-Support:
-    - PREDICATE
+    Instruction-Support:
+      - PREDICATE
   2:
     Portname: EXA
-    Instruction-Group-Support:
-    - INT_SIMPLE
-    - INT_MUL
-    - STORE_DATA
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
+      - STORE_DATA
   3:
     Portname: FLB
-    Instruction-Group-Support:
-    - FP_SIMPLE
-    - FP_MUL
-    - SVE_SIMPLE
-    - SVE_MUL
+    Instruction-Support:
+      - FP_SIMPLE
+      - FP_MUL
+      - SVE_SIMPLE
+      - SVE_MUL
   4:
     Portname: EXB
-    Instruction-Group-Support:
-    - INT_SIMPLE
-    - INT_DIV_OR_SQRT
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_DIV_OR_SQRT
   5:
     Portname: EAGA
-    Instruction-Group-Support:
-    - LOAD
-    - STORE_ADDRESS
-    - INT_SIMPLE_ARTH_NOSHIFT
-    - INT_SIMPLE_LOGICAL_NOSHIFT
-    - INT_SIMPLE_CMP
+    Instruction-Support:
+      - LOAD
+      - STORE_ADDRESS
+      - INT_SIMPLE_ARTH_NOSHIFT
+      - INT_SIMPLE_LOGICAL_NOSHIFT
+      - INT_SIMPLE_CMP
   6:
     Portname: EAGB
-    Instruction-Group-Support:
-    - LOAD
-    - STORE_ADDRESS
-    - INT_SIMPLE_ARTH_NOSHIFT
-    - INT_SIMPLE_LOGICAL_NOSHIFT
-    - INT_SIMPLE_CMP
+    Instruction-Support:
+      - LOAD
+      - STORE_ADDRESS
+      - INT_SIMPLE_ARTH_NOSHIFT
+      - INT_SIMPLE_LOGICAL_NOSHIFT
+      - INT_SIMPLE_CMP
   7:
     Portname: BR
-    Instruction-Group-Support:
-    - BRANCH
+    Instruction-Support:
+      - BRANCH
 Reservation-Stations:
   0:
     Size: 20
     Dispatch-Rate: 2
     Ports:
-    - FLA
-    - PR
-    - EXA
+      - FLA
+      - PR
+      - EXA
   1:
     Size: 20
     Dispatch-Rate: 2
     Ports:
-    - FLB
-    - EXB
+      - FLB
+      - EXB
   2:
     Size: 10
-    Dispatch-Rate: 1
+    Dispatch-Rate: 2
     Ports:
-    - EAGA
+      - EAGA
   3:
     Size: 10
-    Dispatch-Rate: 1
+    Dispatch-Rate: 2
     Ports:
-    - EAGB
+      - EAGB
   4:
     Size: 19
-    Dispatch-Rate: 1
+    Dispatch-Rate: 2
     Ports:
-    - BR
+      - BR
 Execution-Units:
   0:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   1:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   2:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   3:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   4:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   5:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   6:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
   7:
     Pipelined: True
     Blocking-Groups:
-    - INT_DIV_OR_SQRT
-    - FP_DIV_OR_SQRT
-    - SVE_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
 Latencies:
   0:
     Instruction-Groups:
-    - INT
+      - INT
     Execution-Latency: 2
     Execution-Throughput: 2
   1:
     Instruction-Groups:
-    - INT_SIMPLE_ARTH_NOSHIFT
-    - INT_SIMPLE_LOGICAL_NOSHIFT
-    - INT_SIMPLE_CVT
+      - INT_SIMPLE_ARTH_NOSHIFT
+      - INT_SIMPLE_LOGICAL_NOSHIFT
+      - INT_SIMPLE_CVT
     Execution-Latency: 1
     Execution-Throughput: 1
   2:
     Instruction-Groups:
-    - INT_MUL
+      - INT_MUL
     Execution-Latency: 5
     Execution-Throughput: 1
   3:
     Instruction-Groups:
-    - INT_DIV_OR_SQRT
+      - INT_DIV_OR_SQRT
     Execution-Latency: 41
     Execution-Throughput: 41
   4:
     Instruction-Groups:
-    - SCALAR_SIMPLE
-    - VECTOR_SIMPLE_LOGICAL
-    - SVE_SIMPLE_LOGICAL
-    - VECTOR_SIMPLE_CMP
-    - SVE_SIMPLE_CMP
+      - SCALAR_SIMPLE
+      - VECTOR_SIMPLE_LOGICAL
+      - SVE_SIMPLE_LOGICAL
+      - VECTOR_SIMPLE_CMP
+      - SVE_SIMPLE_CMP
     Execution-Latency: 4
     Execution-Throughput: 1
   5:
     Instruction-Groups:
-    - FP_DIV_OR_SQRT
+      - FP_DIV_OR_SQRT
     Execution-Latency: 29
     Execution-Throughput: 29
   6:
     Instruction-Groups:
-    - VECTOR_SIMPLE
-    - SVE_SIMPLE
-    - SCALAR_SIMPLE_CVT
-    - FP_MUL
-    - SVE_MUL
+      - VECTOR_SIMPLE
+      - SVE_SIMPLE
+      - SCALAR_SIMPLE_CVT
+      - FP_MUL
+      - SVE_MUL
     Execution-Latency: 9
     Execution-Throughput: 1
   7:
     Instruction-Groups:
-    - SVE_DIV_OR_SQRT
+      - SVE_DIV_OR_SQRT
     Execution-Latency: 98
     Execution-Throughput: 98
   8:
     Instruction-Groups:
-    - PREDICATE
+      - PREDICATE
     Execution-Latency: 3
     Execution-Throughput: 1
   9:
     Instruction-Groups:
-    - LOAD_SCALAR
-    - LOAD_VECTOR
-    - STORE_ADDRESS_SCALAR
-    - STORE_ADDRESS_VECTOR
+      - LOAD_SCALAR
+      - LOAD_VECTOR
+      - STORE_ADDRESS_SCALAR
+      - STORE_ADDRESS_VECTOR
     Execution-Latency: 3
     Execution-Throughput: 1
   10:
     Instruction-Groups:
-    - LOAD_SVE
-    - STORE_ADDRESS_SVE
+      - LOAD_SVE
+      - STORE_ADDRESS_SVE
     Execution-Latency: 6
-    Execution-Throughput: 1
-# Indexed FMLA instructions split into 2 dependent µops. Latency increased to 15 to mimic such behaviour
-# NOTE: Any changes to the capstone opcode list could invalidate the mapping between ARM instructions and the values below
-  11:
-    Instruction-Opcodes:
-      - 2640
-      - 2642
-      - 2644
-      - 3253
-      - 3254
-      - 3255
-      - 3258
-      - 3259
-      - 3262
-      - 3263
-      - 3265
-      - 3310
-      - 3311
-      - 3312
-      - 3315
-      - 3316
-      - 3319
-      - 3320
-      - 3322
-      - 3371
-      - 3372
-      - 3373
-      - 3376
-      - 3377
-      - 3380
-      - 3381
-      - 3383
-      - 3396
-      - 3397
-      - 3398
-      - 3401
-      - 3402
-      - 3405
-      - 3406
-      - 3408
-      - 4731
-      - 4733
-      - 4735
-      - 4737
-      - 4748
-      - 4750
-      - 4752
-      - 4754
-      - 4883
-      - 4885
-      - 4887
-      - 4889
-      - 5691
-      - 5693
-      - 5695
-      - 5697
-      - 5735
-      - 5737
-      - 5739
-      - 5741
-      - 5783
-      - 5785
-      - 5787
-      - 5789
-      - 5891
-      - 5892
-      - 5893
-      - 5895
-      - 5897
-      - 5899
-      - 5916
-      - 5917
-      - 5918
-      - 5920
-      - 5922
-      - 5924
-      - 5950
-      - 5952
-      - 5954
-      - 5956
-      - 5958
-      - 5960
-      - 5973
-      - 5974
-      - 5975
-      - 5977
-      - 5979
-      - 5981
-      - 6034
-      - 6036
-      - 6038
-      - 6040
-      - 6042
-      - 6044
-      - 6053
-      - 6055
-      - 6057
-      - 6059
-      - 6061
-      - 6063
-      - 6072
-      - 6074
-      - 6076
-      - 6078
-      - 6080
-      - 6082
-      - 7466
-      - 7468
-      - 7470
-      - 7472
-      - 7510
-      - 7512
-      - 7514
-      - 7516
-      - 7556
-      - 7558
-      - 7560
-      - 7562
-    Execution-Latency: 15
     Execution-Throughput: 1
 # CPU-Info mainly used to generate a replica of the special (or system) file directory
 # structure
@@ -392,3 +272,11 @@ CPU-Info:
   # Package-Count is used to generate
   # /sys/devices/system/cpu/cpu{0..Core-Count}/topology/{physical_package_id, core_id}
   Package-Count: 1
+Environment-Variables:
+  - "OMP_NUM_THREADS=1"
+  - "LD_LIBRARY_PATH=/home/rahat/work/ssh-dir/dll/aarch64"
+  - "LD_DEBUG=all"
+  - "LD_SHOW_AUXV=1"
+  - "LD_VERBOSE=1"
+  - "LD_BIND_NOW=1"
+  # - "LD_TRACE_LOADED_OBJECTS"

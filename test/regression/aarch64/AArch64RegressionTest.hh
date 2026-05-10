@@ -4,40 +4,33 @@
 #include "simeng/arch/aarch64/Architecture.hh"
 #include "simeng/arch/aarch64/Instruction.hh"
 
-[[maybe_unused]] static const char* AARCH64_ADDITIONAL_CONFIG = R"YAML(
-{
-  Core:
-    {
-      Clock-Frequency-GHz: 2.5,
-    },
-  Register-Set:
-    {
-      GeneralPurpose-Count: 154,
-      FloatingPoint/SVE-Count: 90,
-      Predicate-Count: 17, 
-      Conditional-Count: 128,
-      SME-Matrix-Count: 2,
-      SME-Lookup-Table-Count: 8,
-    },
-  L1-Data-Memory:
-    {
-      Interface-Type: Flat,
-    },
-  L1-Instruction-Memory:
-    {
-      Interface-Type: Flat,
-    },
-  Ports:
-    {
-      '0': { Portname: 0, Instruction-Group-Support: [INT, FP, SVE, PREDICATE, LOAD, STORE, BRANCH, SME] },
-    },
-}
-)YAML";
+#define AARCH64_CONFIG                                                        \
+  ("{Core: {ISA: AArch64, Simulation-Mode: emulation, Clock-Frequency: 2.5, " \
+   "Timer-Frequency: 100, Micro-Operations: False}, Fetch: "                  \
+   "{Fetch-Block-Size: 32, Loop-Buffer-Size: 64, Loop-Detection-Threshold: "  \
+   "4}, Process-Image: {Heap-Size: 100000, Stack-Size: 100000, Mmap-Size: "   \
+   "200000}, Simulation-Memory: {Size: 500000}, Register-Set: "               \
+   "{GeneralPurpose-Count: 154, FloatingPoint/SVE-Count: 90, "                \
+   "Predicate-Count: 17, Conditional-Count: 128, Matrix-Count: 2}, "          \
+   "Pipeline-Widths: { Commit: 4, FrontEnd: 4, LSQ-Completion: 2}, "          \
+   "Queue-Sizes: {ROB: 180, Load: 64, Store: 36}, Branch-Predictor: "         \
+   "{BTB-Tag-Bits: 11, Saturating-Count-Bits: 2, Global-History-Length: 10, " \
+   "RAS-entries: 5, Fallback-Static-Predictor: 2}, Data-Memory: "             \
+   "{Interface-Type: Flat}, Instruction-Memory: {Interface-Type: Flat}, "     \
+   "LSQ-L1-Interface: {Access-Latency: 4, Exclusive: False, Load-Bandwidth: " \
+   "32, Store-Bandwidth: 16, Permitted-Requests-Per-Cycle: 2, "               \
+   "Permitted-Loads-Per-Cycle: 2, Permitted-Stores-Per-Cycle: 1}, Ports: "    \
+   "{'0': {Portname: Port 0, Instruction-Group-Support: [0, 14, 52, 66, 67, " \
+   "70, 71, 72]}}, Reservation-Stations: {'0': {Size: 60, Dispatch-Rate: 4, " \
+   "Ports: [0]}}, Execution-Units: {'0': {Pipelined: true}}, CPU-Info: "      \
+   "{Generate-Special-Dir: False}}")
 
 /** A helper function to convert the supplied parameters of
  * INSTANTIATE_TEST_SUITE_P into test name. */
 inline std::string paramToString(
-    const testing::TestParamInfo<std::tuple<CoreType, std::string>> val) {
+    const testing::TestParamInfo<std::tuple<CoreType, YAML::Node>> val) {
+  YAML::Node config = YAML::Load(AARCH64_CONFIG);
+
   // Get core type as string
   std::string coreString = "";
   switch (std::get<0>(val.param)) {
@@ -56,47 +49,39 @@ inline std::string paramToString(
   }
   // Get vector length as string
   std::string vectorLengthString = "";
-  // Temporarily construct a ryml::Tree to extract config options as strings
-  ryml::Tree tempTree =
-      ryml::parse_in_arena(ryml::to_csubstr(std::get<1>(val.param)));
-  if (tempTree.rootref().has_child("Core")) {
-    if (tempTree.rootref()["Core"].has_child("Vector-Length")) {
-      vectorLengthString +=
-          "WithVL" + tempTree["Core"]["Vector-Length"].as<std::string>();
-    }
-    if (tempTree.rootref()["Core"].has_child("Streaming-Vector-Length")) {
-      vectorLengthString +=
-          "WithSVL" +
-          tempTree["Core"]["Streaming-Vector-Length"].as<std::string>();
-    }
+  if (std::get<1>(val.param)["Vector-Length"].IsDefined() &&
+      !(std::get<1>(val.param)["Vector-Length"].IsNull())) {
+    vectorLengthString =
+        "WithVL" + std::get<1>(val.param)["Vector-Length"].as<std::string>();
+  } else if (std::get<1>(val.param)["Streaming-Vector-Length"].IsDefined() &&
+             !(std::get<1>(val.param)["Streaming-Vector-Length"].IsNull())) {
+    vectorLengthString =
+        "WithSVL" +
+        std::get<1>(val.param)["Streaming-Vector-Length"].as<std::string>();
   }
   return coreString + vectorLengthString;
 }
 
 /** A helper function to generate all coreType vector-length pairs. */
-inline std::vector<std::tuple<CoreType, std::string>> genCoreTypeVLPairs(
+inline std::vector<std::tuple<CoreType, YAML::Node>> genCoreTypeVLPairs(
     CoreType type) {
-  std::vector<std::tuple<CoreType, std::string>> coreVLPairs;
+  std::vector<std::tuple<CoreType, YAML::Node>> coreVLPairs;
   for (uint64_t i = 128; i <= 2048; i += 128) {
-    coreVLPairs.push_back(std::make_tuple(
-        type,
-        "{Core: {Vector-Length: " + std::to_string(i) +
-            "}, LSQ-L1-Interface: {Load-Bandwidth: " + std::to_string(i / 8) +
-            ", Store-Bandwidth: " + std::to_string(i / 8) + "}}"));
+    YAML::Node vlNode;
+    vlNode["Vector-Length"] = i;
+    coreVLPairs.push_back(std::make_tuple(type, vlNode));
   }
   return coreVLPairs;
 }
 
 /** A helper function to generate all coreType streaming-vector-length pairs. */
-inline std::vector<std::tuple<CoreType, std::string>> genCoreTypeSVLPairs(
+inline std::vector<std::tuple<CoreType, YAML::Node>> genCoreTypeSVLPairs(
     CoreType type) {
-  std::vector<std::tuple<CoreType, std::string>> coreSVLPairs;
-  for (uint64_t i = 128; i <= 2048; i *= 2) {
-    coreSVLPairs.push_back(std::make_tuple(
-        type,
-        "{Core: {Streaming-Vector-Length: " + std::to_string(i) +
-            "}, LSQ-L1-Interface: {Load-Bandwidth: " + std::to_string(i / 8) +
-            ", Store-Bandwidth: " + std::to_string(i / 8) + "}}"));
+  std::vector<std::tuple<CoreType, YAML::Node>> coreSVLPairs;
+  for (uint64_t i = 128; i <= 2048; i += 128) {
+    YAML::Node svlNode;
+    svlNode["Streaming-Vector-Length"] = i;
+    coreSVLPairs.push_back(std::make_tuple(type, svlNode));
   }
   return coreSVLPairs;
 }
@@ -104,8 +89,7 @@ inline std::vector<std::tuple<CoreType, std::string>> genCoreTypeSVLPairs(
 /** A helper macro to run a snippet of Armv9.2-a assembly code, returning from
  * the calling function if a fatal error occurs. Four bytes containing zeros are
  * appended to the source to ensure that the program will terminate with an
- * unallocated instruction encoding exception instead of running into the heap.
- */
+ * illegal instruction exception instead of running into the heap. */
 #define RUN_AARCH64(source)                    \
   {                                            \
     std::string sourceWithTerminator = source; \
@@ -163,7 +147,7 @@ inline std::vector<std::tuple<CoreType, std::string>> genCoreTypeSVLPairs(
  * For example:
  *
  *     // Compare za1h.s[0] to some expected 32-bit floating point values.
- *     CHECK_MAT_ROW(AARCH64_REG_ZAS1, 0, float, {123.456f, 0.f, 42.f, -1.f});
+ *     CHECK_MAT_ROW(ARM64_REG_ZAS1, 0, float, {123.456f, 0.f, 42.f, -1.f});
  */
 #define CHECK_MAT_ROW(tag, index, type, ...)               \
   {                                                        \
@@ -182,45 +166,13 @@ inline std::vector<std::tuple<CoreType, std::string>> genCoreTypeSVLPairs(
  * For example:
  *
  *     // Compare za1v.s[0] to some expected 32-bit floating point values.
- *     CHECK_MAT_COL(AARCH64_REG_ZAS1, 0, float, {123.456f, 0.f, 42.f, -1.f});
+ *     CHECK_MAT_COL(ARM64_REG_ZAS1, 0, float, {123.456f, 0.f, 42.f, -1.f});
  */
 #define CHECK_MAT_COL(tag, index, type, ...)               \
   {                                                        \
     SCOPED_TRACE("<<== error generated here");             \
     checkMatrixRegisterCol<type>(tag, index, __VA_ARGS__); \
   }
-
-/** Check each element of the Lookup Table register ZT0 against expected values.
- *
- * The `type` argument is the C++ data type to use for value comparisons. The
- * third argument should be an initializer list containing one value for each
- * register element (for a total of `(64 / sizeof(type))` values).
- *
- * For example:
- *
- *     // Compare zt0 to some expected 32-bit uint64 values.
- *     CHECK_TABLE(0, uint32_t, {1, 2, 3, 4, ..., 16});
- */
-#define CHECK_TABLE(type, ...)                 \
-  {                                            \
-    SCOPED_TRACE("<<== error generated here"); \
-    checkTableRegister<type>(__VA_ARGS__);     \
-  }
-
-/** A helper macro to predecode the first instruction in a snippet of Armv9.2-a
- * assembly code and check the assigned group(s) for each micro-op matches the
- * expected group(s). Returns from the calling function if a fatal error occurs.
- * Four bytes containing zeros are appended to the source to ensure that the
- * program will terminate with an unallocated instruction encoding exception
- * instead of running into the heap.
- */
-#define EXPECT_GROUP(source, ...)                            \
-  {                                                          \
-    std::string sourceWithTerminator = source;               \
-    sourceWithTerminator += "\n.word 0";                     \
-    checkGroup(sourceWithTerminator.c_str(), {__VA_ARGS__}); \
-  }                                                          \
-  if (HasFatalFailure()) return
 
 /** The test fixture for all AArch64 regression tests. */
 class AArch64RegressionTest : public RegressionTest {
@@ -230,43 +182,16 @@ class AArch64RegressionTest : public RegressionTest {
   /** Run the assembly code in `source`. */
   void run(const char* source);
 
-  /** Run the first instruction in source through predecode and check the
-   * groups. */
-  void checkGroup(const char* source,
-                  const std::vector<uint16_t>& expectedGroups);
-
   /** Generate a default YAML-formatted configuration. */
-  void generateConfig() const override;
+  YAML::Node generateConfig() const override;
 
-  /** Instantiate an ISA specific architecture from a kernel. */
-  virtual std::unique_ptr<simeng::arch::Architecture> instantiateArchitecture(
-      simeng::kernel::Linux& kernel) const override;
+  /** Create an ISA instance. */
+  virtual std::unique_ptr<simeng::arch::Architecture> createArchitecture()
+      const override;
 
   /** Create a port allocator for an out-of-order core model. */
-  virtual std::unique_ptr<simeng::pipeline::PortAllocator> createPortAllocator(
-      ryml::ConstNodeRef config =
-          simeng::config::SimInfo::getConfig()) const override;
-
-  /** Initialise LLVM */
-  void initialiseLLVM() {
-    LLVMInitializeAArch64TargetInfo();
-    LLVMInitializeAArch64TargetMC();
-    LLVMInitializeAArch64AsmParser();
-  }
-
-  /** Get the subtarget feature string based on LLVM version being used */
-  std::string getSubtargetFeaturesString() {
-    std::string features = "+dotprod,+sve,+lse";
-#if SIMENG_LLVM_VERSION > 13
-    // "+dotprod,+sve,+lse,+sve2,+sme,+sme-f64";
-    features += ",+sve2,+sme,+sme-f64";
-#endif
-#if SIMENG_LLVM_VERSION > 17
-    // "+dotprod,+sve,+lse,+sve2,+sme,+sme-f64f64,+sme-i16i64,+sme2";
-    features += "f64,+sme-i16i64,+sme2";
-#endif
-    return features;
-  }
+  virtual std::unique_ptr<simeng::pipeline::PortAllocator> createPortAllocator()
+      const override;
 
   /** Check the elements of a Neon register.
    *
@@ -312,22 +237,22 @@ class AArch64RegressionTest : public RegressionTest {
     // Get matrix row register tag
     uint8_t base = 0;
     uint8_t tileTypeCount = 0;
-    if (tag == AARCH64_REG_ZA || tag == AARCH64_REG_ZAB0) {
+    if (tag == ARM64_REG_ZA || tag == ARM64_REG_ZAB0) {
       // Treat ZA as byte tile : ZAB0 represents whole matrix, only 1 tile
       // Add all rows for this SVL
       // Don't need to set base as will always be 0
       tileTypeCount = 1;
-    } else if (tag >= AARCH64_REG_ZAH0 && tag <= AARCH64_REG_ZAH1) {
-      base = tag - AARCH64_REG_ZAH0;
+    } else if (tag >= ARM64_REG_ZAH0 && tag <= ARM64_REG_ZAH1) {
+      base = tag - ARM64_REG_ZAH0;
       tileTypeCount = 2;
-    } else if (tag >= AARCH64_REG_ZAS0 && tag <= AARCH64_REG_ZAS3) {
-      base = tag - AARCH64_REG_ZAS0;
+    } else if (tag >= ARM64_REG_ZAS0 && tag <= ARM64_REG_ZAS3) {
+      base = tag - ARM64_REG_ZAS0;
       tileTypeCount = 4;
-    } else if (tag >= AARCH64_REG_ZAD0 && tag <= AARCH64_REG_ZAD7) {
-      base = tag - AARCH64_REG_ZAD0;
+    } else if (tag >= ARM64_REG_ZAD0 && tag <= ARM64_REG_ZAD7) {
+      base = tag - ARM64_REG_ZAD0;
       tileTypeCount = 8;
-    } else if (tag >= AARCH64_REG_ZAQ0 && tag <= AARCH64_REG_ZAQ15) {
-      base = tag - AARCH64_REG_ZAQ0;
+    } else if (tag >= ARM64_REG_ZAQ0 && tag <= ARM64_REG_ZAQ15) {
+      base = tag - ARM64_REG_ZAQ0;
       tileTypeCount = 16;
     }
     uint16_t reg_tag = base + (index * tileTypeCount);
@@ -351,22 +276,22 @@ class AArch64RegressionTest : public RegressionTest {
     // Get matrix row register tag
     uint8_t base = 0;
     uint8_t tileTypeCount = 0;
-    if (tag == AARCH64_REG_ZA || tag == AARCH64_REG_ZAB0) {
+    if (tag == ARM64_REG_ZA || tag == ARM64_REG_ZAB0) {
       // Treat ZA as byte tile : ZAB0 represents whole matrix, only 1 tile
       // Add all rows for this SVL
       // Don't need to set base as will always be 0
       tileTypeCount = 1;
-    } else if (tag >= AARCH64_REG_ZAH0 && tag <= AARCH64_REG_ZAH1) {
-      base = tag - AARCH64_REG_ZAH0;
+    } else if (tag >= ARM64_REG_ZAH0 && tag <= ARM64_REG_ZAH1) {
+      base = tag - ARM64_REG_ZAH0;
       tileTypeCount = 2;
-    } else if (tag >= AARCH64_REG_ZAS0 && tag <= AARCH64_REG_ZAS3) {
-      base = tag - AARCH64_REG_ZAS0;
+    } else if (tag >= ARM64_REG_ZAS0 && tag <= ARM64_REG_ZAS3) {
+      base = tag - ARM64_REG_ZAS0;
       tileTypeCount = 4;
-    } else if (tag >= AARCH64_REG_ZAD0 && tag <= AARCH64_REG_ZAD7) {
-      base = tag - AARCH64_REG_ZAD0;
+    } else if (tag >= ARM64_REG_ZAD0 && tag <= ARM64_REG_ZAD7) {
+      base = tag - ARM64_REG_ZAD0;
       tileTypeCount = 8;
-    } else if (tag >= AARCH64_REG_ZAQ0 && tag <= AARCH64_REG_ZAQ15) {
-      base = tag - AARCH64_REG_ZAQ0;
+    } else if (tag >= ARM64_REG_ZAQ0 && tag <= ARM64_REG_ZAQ15) {
+      base = tag - ARM64_REG_ZAQ0;
       tileTypeCount = 16;
     }
 
@@ -374,21 +299,6 @@ class AArch64RegressionTest : public RegressionTest {
       uint16_t reg_tag = base + (i * tileTypeCount);
       const T data_i = getMatrixRegisterRow<T>(reg_tag)[index];
       EXPECT_NEAR(data_i, values[i], 0.0005)
-          << "Mismatch for element " << i << ".";
-    }
-  }
-
-  /** Check the elements of the ZT0 lookup table register.
-   *
-   * This should be invoked via the `CHECK_TABLE` macro in order to provide
-   * better diagnostic messages, rather than called directly from test code.
-   */
-  template <typename T>
-  void checkTableRegister(const std::array<T, (64 / sizeof(T))>& values) const {
-    const T* data = RegressionTest::getVectorRegister<T>(
-        {simeng::arch::aarch64::RegisterType::TABLE, 0});
-    for (unsigned i = 0; i < (64 / sizeof(T)); i++) {
-      EXPECT_NEAR(data[i], values[i], 0.0005)
           << "Mismatch for element " << i << ".";
     }
   }
@@ -441,13 +351,13 @@ class AArch64RegressionTest : public RegressionTest {
   /** Generate an array representing a NEON register from a source vector and a
    * number of elements defined by a number of bytes used. */
   template <typename T>
-  std::array<T, (256 / sizeof(T))> fillNeon(const std::vector<T>& src,
-                                            uint32_t num_bytes) const {
+  std::array<T, (256 / sizeof(T))> fillNeon(std::vector<T> src,
+                                            int num_bytes) const {
     // Create array to be returned and fill with a default value of 0
     std::array<T, (256 / sizeof(T))> generatedArray;
     generatedArray.fill(0);
     // Fill array by cycling through source elements
-    for (size_t i = 0; i < (num_bytes / sizeof(T)); i++) {
+    for (int i = 0; i < (num_bytes / sizeof(T)); i++) {
       generatedArray[i] = src[i % src.size()];
     }
     return generatedArray;
@@ -480,7 +390,7 @@ class AArch64RegressionTest : public RegressionTest {
     std::array<T, (256 / sizeof(T))> generatedArray;
     generatedArray.fill(0);
     // Fill array by adding an increasing offset value to the base value
-    for (size_t i = 0; i < (num_bytes / sizeof(T)); i++) {
+    for (int i = 0; i < (num_bytes / sizeof(T)); i++) {
       generatedArray[i] = base + (i * offset);
     }
     return generatedArray;
@@ -563,37 +473,17 @@ class AArch64RegressionTest : public RegressionTest {
     return generatedArray;
   }
 
-  /** A function to get the current vector length from the test config string if
-   * present (defaults to 0). */
-  uint64_t getVL() {
-    uint64_t VL = 0;
-    // Temporarily construct a ryml::Tree to extract the VL
-    ryml::Tree tempTree =
-        ryml::parse_in_arena(ryml::to_csubstr(std::get<1>(GetParam())));
-    if (tempTree.rootref().has_child("Core") &&
-        tempTree.rootref()["Core"].has_child("Vector-Length")) {
-      VL = tempTree["Core"]["Vector-Length"].as<uint64_t>();
-    }
-    return VL;
-  }
-
-  /** A function to get the current streaming vector length from the test config
-   * string if present (defaults to 0). */
-  uint64_t getSVL() {
-    uint64_t SVL = 0;
-    // Temporarily construct a ryml::Tree to extract the SVL
-    ryml::Tree tempTree =
-        ryml::parse_in_arena(ryml::to_csubstr(std::get<1>(GetParam())));
-    if (tempTree.rootref().has_child("Core") &&
-        tempTree.rootref()["Core"].has_child("Streaming-Vector-Length")) {
-      SVL = tempTree["Core"]["Streaming-Vector-Length"].as<uint64_t>();
-    }
-    return SVL;
-  }
-
   /** The current vector-length being used by the test suite. */
-  const uint64_t VL = getVL();
+  const uint64_t VL =
+      (std::get<1>(GetParam())["Vector-Length"].IsDefined() &&
+       !(std::get<1>(GetParam())["Vector-Length"].IsNull()))
+          ? std::get<1>(GetParam())["Vector-Length"].as<uint64_t>()
+          : 0;
 
   /** The current streaming-vector-length being used by the test suite. */
-  const uint64_t SVL = getSVL();
+  const uint64_t SVL =
+      (std::get<1>(GetParam())["Streaming-Vector-Length"].IsDefined() &&
+       !(std::get<1>(GetParam())["Streaming-Vector-Length"].IsNull()))
+          ? std::get<1>(GetParam())["Streaming-Vector-Length"].as<uint64_t>()
+          : 0;
 };

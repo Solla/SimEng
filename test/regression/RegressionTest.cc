@@ -2,13 +2,11 @@
 
 #include <string>
 
-#include "simeng/branchpredictors/GenericPredictor.hh"
-#include "simeng/branchpredictors/PerceptronPredictor.hh"
-#include "simeng/config/SimInfo.hh"
-#include "simeng/kernel/Linux.hh"
-#include "simeng/kernel/LinuxProcess.hh"
-#include "simeng/memory/FixedLatencyMemoryInterface.hh"
-#include "simeng/memory/FlatMemoryInterface.hh"
+#include "simeng/FixedLatencyMemoryInterface.hh"
+#include "simeng/FlatMemoryInterface.hh"
+#include "simeng/GenericPredictor.hh"
+#include "simeng/OS/Process.hh"
+#include "simeng/OS/SimOS.hh"
 #include "simeng/models/emulation/Core.hh"
 #include "simeng/models/inorder/Core.hh"
 #include "simeng/models/outoforder/Core.hh"
@@ -21,132 +19,96 @@ void RegressionTest::TearDown() {
   }
 }
 
-void RegressionTest::createArchitecture(const char* source, const char* triple,
-                                        const char* extensions) {
-  // Zero-out process memory from any prior runs
-  if (processMemory_ != nullptr)
-    std::memset(processMemory_, '\0', processMemorySize_);
+void RegressionTest::run(const char* source, const char* triple,
+                         const char* extensions) {
+  testing::internal::CaptureStdout();
 
   // Assemble the source to a flat binary
   assemble(source, triple, extensions);
   if (HasFatalFailure()) return;
 
-  // Generate the predefined model config
-  generateConfig();
+  // Get pre-defined config file for OoO model
+  YAML::Node config = generateConfig();
+  Config::set(config);
 
-  // Due to SimInfo being static, we need to ensure the config values/options
-  // stored are up-to-date with the latest generated config file
-  simeng::config::SimInfo::reBuild();
+  const size_t memorySize =
+      Config::get()["Simulation-Memory"]["Size"].as<size_t>();
 
-  // Create a linux process from the assembled code block.
-  // Memory allocation for process images also takes place
-  // during linux process creation. The Elf binary is parsed
-  // and relevant sections are copied to the process image.
-  // The process image is finalised by the createStack method
-  // which creates and populates the initial process stack.
-  // The created process image can be accessed via a shared_ptr
-  // returned by the getProcessImage method
-  process_ = std::make_unique<simeng::kernel::LinuxProcess>(
-      simeng::span(reinterpret_cast<const uint8_t*>(code_), codeSize_));
+  // Initialise the simulation memory
+  memory_ = std::make_shared<simeng::memory::SimpleMem>(memorySize);
 
+  // Initialise a SimOS object & create initial process from test assembly code.
+  simeng::OS::SimOS OS = simeng::OS::SimOS(
+      memory_, simeng::span<char>(reinterpret_cast<char*>(code_), codeSize_));
+
+  uint64_t procTID = 1;  // Initial process always has TID = 1
+  process_ = OS.getProcess(procTID);
   ASSERT_TRUE(process_->isValid());
-  entryPoint_ = process_->getEntryPoint();
-  processMemorySize_ = process_->getProcessImageSize();
-
-  // This instance of procImgPtr pointer needs to be shared because
-  // getMemoryValue in RegressionTest.hh uses reference to the class
-  // member processMemory_
-  std::shared_ptr<char> procImgPtr = process_->getProcessImage();
-  processMemory_ = procImgPtr.get();
-
-  // Populate the heap with initial data (specified by the test being run)
-  ASSERT_LT(process_->getHeapStart() + initialHeapData_.size(),
-            process_->getInitialStackPointer());
-  std::copy(initialHeapData_.begin(), initialHeapData_.end(),
-            processMemory_ + process_->getHeapStart());
-
-  ASSERT_TRUE(process_ != nullptr);
-
-  // Create the OS kernel and the process
-  kernel_ = std::make_unique<simeng::kernel::Linux>(
-      simeng::config::SimInfo::getConfig()["CPU-Info"]["Special-File-Dir-Path"]
-          .as<std::string>());
-  kernel_->createProcess(*process_);
+  processMemorySize_ = process_->context_.progByteLen;
 
   // Create the architecture
-  architecture_ = instantiateArchitecture(*kernel_);
-}
-
-void RegressionTest::createCore(const char* source, const char* triple,
-                                const char* extensions) {
-  // Create the architecture, kernel and process
-  createArchitecture(source, triple, extensions);
-
-  // Create a branch predictor for a pipelined core
-  std::string predictorType =
-      simeng::config::SimInfo::getConfig()["Branch-Predictor"]["Type"]
-          .as<std::string>();
-  if (predictorType == "Generic") {
-    predictor_ = std::make_unique<simeng::GenericPredictor>();
-  } else if (predictorType == "Perceptron") {
-    predictor_ = std::make_unique<simeng::PerceptronPredictor>();
-  }
+  architecture_ = createArchitecture();
+  std::shared_ptr<simeng::memory::MMU> mmu =
+      std::make_shared<simeng::memory::MMU>(memory_, OS.getVAddrTranslator(),
+                                            procTID);
 
   // Create memory interfaces for instruction and data access.
-  // For each memory interface, a dereferenced shared_ptr to the
-  // processImage is passed as an argument
+  // A shared_ptr to the MMU is passed to each interface.
+  simeng::FlatMemoryInterface instructionMemory(mmu);
+  std::unique_ptr<simeng::FlatMemoryInterface> flatDataMemory =
+      std::make_unique<simeng::FlatMemoryInterface>(mmu);
+  std::unique_ptr<simeng::FixedLatencyMemoryInterface> fixedLatencyDataMemory =
+      std::make_unique<simeng::FixedLatencyMemoryInterface>(mmu, 4);
 
-  ASSERT_TRUE(processMemory_ != nullptr);
+  std::unique_ptr<simeng::MemoryInterface> dataMemory;
 
-  instructionMemory_ = std::make_unique<simeng::memory::FlatMemoryInterface>(
-      processMemory_, processMemorySize_);
+  // Populate the heap with initial data (specified by the test being run).
+  ASSERT_LT(process_->getHeapStart() + initialHeapData_.size(),
+            process_->getStackPointer());
 
-  flatDataMemory_ = std::make_unique<simeng::memory::FlatMemoryInterface>(
-      processMemory_, processMemorySize_);
+  uint64_t addr = process_->translate(process_->getHeapStart());
+  memory_->sendUntimedData(initialHeapData_, addr, initialHeapData_.size());
 
-  fixedLatencyDataMemory_ =
-      std::make_unique<simeng::memory::FixedLatencyMemoryInterface>(
-          processMemory_, processMemorySize_, 4);
+  // Create a port allocator for an out-of-order core
+  std::unique_ptr<simeng::pipeline::PortAllocator> portAllocator =
+      createPortAllocator();
 
+  // Create a branch predictor for a pipelined core
+  simeng::GenericPredictor predictor = simeng::GenericPredictor();
   // Create the core model
   switch (std::get<0>(GetParam())) {
     case EMULATION:
-      core_ = std::make_unique<simeng::models::emulation::Core>(
-          *instructionMemory_, *flatDataMemory_, entryPoint_,
-          processMemorySize_, *architecture_);
-      dataMemory_ = std::move(flatDataMemory_);
+      core_ = std::make_shared<simeng::models::emulation::Core>(
+          instructionMemory, *flatDataMemory, *architecture_, mmu,
+          OS.getSyscallReceiver());
+      dataMemory = std::move(flatDataMemory);
       break;
     case INORDER:
-      core_ = std::make_unique<simeng::models::inorder::Core>(
-          *instructionMemory_, *flatDataMemory_, processMemorySize_,
-          entryPoint_, *architecture_, *predictor_);
-      dataMemory_ = std::move(flatDataMemory_);
+      core_ = std::make_shared<simeng::models::inorder::Core>(
+          instructionMemory, *flatDataMemory, *architecture_, predictor, mmu,
+          OS.getSyscallReceiver());
+      dataMemory = std::move(flatDataMemory);
       break;
     case OUTOFORDER:
-      // Create a port allocator for an out-of-order core
-      portAllocator_ = createPortAllocator();
-
-      core_ = std::make_unique<simeng::models::outoforder::Core>(
-          *instructionMemory_, *fixedLatencyDataMemory_, processMemorySize_,
-          entryPoint_, *architecture_, *predictor_, *portAllocator_);
-      dataMemory_ = std::move(fixedLatencyDataMemory_);
+      core_ = std::make_shared<simeng::models::outoforder::Core>(
+          instructionMemory, *fixedLatencyDataMemory, *architecture_, predictor,
+          mmu, *portAllocator, OS.getSyscallReceiver());
+      dataMemory = std::move(fixedLatencyDataMemory);
       break;
   }
-}
 
-void RegressionTest::run(const char* source, const char* triple,
-                         const char* extensions) {
-  testing::internal::CaptureStdout();
+  // Schedule Process on core
+  OS.registerCore(core_);
+  core_->schedule(process_->context_);
 
-  // Create the core, memory interfaces, kernel and process
-  createCore(source, triple, extensions);
-
-  // Run the core model until the program is complete
-  while (!core_->hasHalted() || dataMemory_->hasPendingRequests()) {
+  // Run the OS and core model until the program is complete
+  while (!(core_->getStatus() == simeng::CoreStatus::halted) ||
+         dataMemory->hasPendingRequests()) {
     ASSERT_LT(numTicks_, maxTicks_) << "Maximum tick count exceeded.";
+    OS.tick();
     core_->tick();
-    instructionMemory_->tick();
-    dataMemory_->tick();
+    instructionMemory.tick();
+    dataMemory->tick();
     numTicks_++;
   }
 
@@ -154,24 +116,6 @@ void RegressionTest::run(const char* source, const char* triple,
   std::cout << stdout_;
 
   programFinished_ = true;
-}
-
-void RegressionTest::checkGroup(const char* source, const char* triple,
-                                const char* extensions,
-                                const std::vector<uint16_t>& expectedGroups) {
-  createArchitecture(source, triple, extensions);
-
-  std::vector<std::shared_ptr<simeng::Instruction>> macroOp;
-  architecture_->predecode(code_, 4, 0, macroOp);
-
-  // Check that there is one expectation group per micro-op
-  EXPECT_EQ(macroOp.size(), expectedGroups.size());
-
-  // Check the assigned and expected group for each micro-op match
-  for (size_t i = 0; i < macroOp.size(); i++) {
-    auto group = macroOp[i]->getGroup();
-    EXPECT_EQ(group, expectedGroups[i]);
-  }
 }
 
 void RegressionTest::assemble(const char* source, const char* triple,
@@ -239,13 +183,8 @@ void RegressionTest::assemble(const char* source, const char* triple,
   ASSERT_NE(asmBackend, nullptr) << "Failed to create LLVM asm backend";
 
   // Create MC code emitter
-#if SIMENG_LLVM_VERSION < 15
   std::unique_ptr<llvm::MCCodeEmitter> codeEmitter(
       target->createMCCodeEmitter(*instrInfo, *regInfo, context));
-#else
-  std::unique_ptr<llvm::MCCodeEmitter> codeEmitter(
-      target->createMCCodeEmitter(*instrInfo, context));
-#endif
   ASSERT_NE(codeEmitter, nullptr) << "Failed to create LLVM code emitter";
 
   // Create MC object writer
@@ -280,14 +219,8 @@ void RegressionTest::assemble(const char* source, const char* triple,
 
   // Create ELF object from output
   llvm::StringRef objectData = objectStream.str();
-#if SIMENG_LLVM_VERSION < 15
   auto elfOrErr = llvm::object::ELFFile<
       llvm::object::ELFType<llvm::support::little, true>>::create(objectData);
-#else
-  auto elfOrErr =
-      llvm::object::ELFFile<llvm::object::ELFType<llvm::endianness::little,
-                                                  true>>::create(objectData);
-#endif
   ASSERT_FALSE(elfOrErr.takeError()) << "Failed to load ELF object";
   auto& elf = *elfOrErr;
 

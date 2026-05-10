@@ -1,12 +1,15 @@
 .clang_complete
 .vscode
 .idea
+.cache
+.cache/clangd
+compile_commands.json
+build/compile_commands.json
+.ccls-cache
 .DS_Store
 obj
 build
 xcode-build
-cmake-build-debug
-cmake-build-release
 docs/sphinx/_build
 binaries
 install
@@ -14,7 +17,6 @@ install-debug
 capstone.pc
 version.hh
 **/specialFiles/
-.cache
 
 CMakeCache.txt
 CPackConfig.cmake

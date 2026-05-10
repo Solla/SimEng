@@ -12,8 +12,12 @@ Fetch:
   Loop-Buffer-Size: 64
   Loop-Detection-Threshold: 4
 Process-Image:
+  Mmap-Size: 1073741824
   Heap-Size: 1073741824
   Stack-Size: 1048576
+Simulation-Memory:
+  # 2.6 GiB
+  Size: 2684354560
 Register-Set:
   GeneralPurpose-Count: 154
   FloatingPoint/SVE-Count: 90
@@ -187,3 +191,5 @@ CPU-Info:
   # Package-Count is used to generate 
   # /sys/devices/system/cpu/cpu{0..Core-Count}/topology/{physical_package_id, core_id}
   Package-Count: 1
+Environment-Variables:
+  - "OMP_NUM_THREADS=1"

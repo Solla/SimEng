@@ -1,5 +1,10 @@
 #include "simeng/Elf.hh"
 
+#include <fcntl.h>
+#include <libelf.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -10,6 +15,7 @@
 #include <memory>
 #include <string>
 
+#include "simeng/util/Math.hh"
 #include "simeng/version.hh"
 
 namespace simeng {
@@ -148,13 +154,13 @@ std::vector<Elf64_Phdr> Elf::parseElfPhdrs(
 std::shared_ptr<Elf_Binary> Elf::parseElfBinary(std::string fpath) {
   std::ifstream file(fpath, std::ios::binary);
   if (!file.is_open()) {
-    std::cerr << "[SimEng:Elf] Could not open file " << fpath << std::endl;
+    // TODO: Error message
     std::exit(1);
   }
   char elfMagic[4] = {0x7f, 'E', 'L', 'F'};
   auto ehdr = parseElfEhdr(file);
   if (std::memcmp(elfMagic, ehdr.e_ident.data(), sizeof(elfMagic))) {
-    std::cerr << "[SimEng:Elf] Elf magic does not match for " << fpath << std::endl;
+    std::cerr << "[SimEng:Elf] Elf magic does not match" << std::endl;
     std::exit(1);
   }
   if (ehdr.e_ident[EI_CLASS] != ElfBitFormat::Format64) {
@@ -168,17 +174,16 @@ std::shared_ptr<Elf_Binary> Elf::parseElfBinary(std::string fpath) {
   return std::shared_ptr<Elf_Binary>(new Elf_Binary{ehdr, phdrs});
 }
 
-Elf::Elf(std::string path, std::string interpreterPath) {
+Elf::Elf(std::string path) {
   executable_ = parseElfBinary(path);
   if (isDynamic_) {
-    if (interpreterPath.empty()) {
-      std::cerr << "[SimEng:Elf] Dynamic executable requires an interpreter path, but none was provided." << std::endl;
-      std::exit(1);
-    }
-    interpreterPath_ = interpreterPath;
+    // Override path of binary supplied interpreter by one specified by user.
+    // Because host interpreter can be different from interpreter the binary
+    // specifies
+    interpreterPath_ =
+        "/home/rahat/work/ssh-dir/dll/aarch64/ld-linux-aarch64.so.1";
     interpreter_ = parseElfBinary(interpreterPath_);
   }
-  isValid_ = true;
 }
 
 bool Elf::isValid() const { return isValid_; }

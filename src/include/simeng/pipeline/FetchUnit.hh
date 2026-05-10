@@ -2,8 +2,8 @@
 
 #include <queue>
 
+#include "simeng/MemoryInterface.hh"
 #include "simeng/arch/Architecture.hh"
-#include "simeng/memory/MemoryInterface.hh"
 #include "simeng/pipeline/PipelineBuffer.hh"
 
 namespace simeng {
@@ -38,11 +38,9 @@ class FetchUnit {
  public:
   /** Construct a fetch unit with a reference to an output buffer, the ISA, and
    * the current branch predictor, and information on the instruction memory. */
-  FetchUnit(PipelineBuffer<MacroOp>& output,
-            memory::MemoryInterface& instructionMemory,
-            uint64_t programByteLength, uint64_t entryPoint, uint16_t blockSize,
-            const arch::Architecture& isa, BranchPredictor& branchPredictor,
-            uint16_t mopQueueSize, uint8_t mopCacheTagBits);
+  FetchUnit(PipelineBuffer<MacroOp>& output, MemoryInterface& instructionMemory,
+            uint8_t blockSize, const arch::Architecture& isa,
+            BranchPredictor& branchPredictor);
 
   ~FetchUnit();
 
@@ -50,25 +48,48 @@ class FetchUnit {
    * current program counter. */
   void tick();
 
+  /** Function handle to retrieve branch that represents loop boundary. */
+  void registerLoopBoundary(uint64_t branchAddress);
+
   /** Check whether the program has ended. Returns `true` if the current PC is
    * outside of instruction memory. */
   bool hasHalted() const;
 
-  /** Update the program counter to the specified address. */
+  /** Update the program counter to the specified address.
+   * NOTE: Must set program length before calling when scheduling.
+   */
   void updatePC(uint64_t address);
 
-  /** Retrieve the current program counter. */
-  uint64_t getPC() const;
+  /** Update programByteLength_ to the specified value.
+   * NOTE: Must be set before updating PC when scheduling.
+   */
+  void setProgramLength(uint64_t size);
+
+  /** Request instructions at the current program counter for a future cycle. */
+  void requestFromPC();
 
   /** Retrieve the number of cycles fetch terminated early due to a predicted
    * branch. */
   uint64_t getBranchStalls() const;
 
-  /** Retrieve the number of branches fetched. */
-  uint64_t getBranchFetchedCount() const;
+  /** Clear the loop buffer. */
+  void flushLoopBuffer();
 
-  /** Request a block from instruction memory using the current PC. */
-  void requestFromPC();
+  /** Temporarily pause the FetchUnit. */
+  void pause() {
+    paused_ = true;
+    instructionMemory_.clearCompletedReads();
+    flushLoopBuffer();
+  };
+
+  /** Unpause the fetch unit. */
+  void unpause() {
+    paused_ = false;
+    requestFromPC();
+  };
+
+  /** Get the current PC value. */
+  uint64_t getPC() const { return pc_; };
 
  private:
   /** An output buffer connecting this unit to the decode unit. */
@@ -78,10 +99,10 @@ class FetchUnit {
   uint64_t pc_ = 0;
 
   /** An interface to the instruction memory. */
-  memory::MemoryInterface& instructionMemory_;
+  MemoryInterface& instructionMemory_;
 
   /** The length of the available instruction memory. */
-  uint64_t programByteLength_;
+  uint64_t programByteLength_ = 0;
 
   /** Reference to the currently used ISA. */
   const arch::Architecture& isa_;
@@ -89,15 +110,14 @@ class FetchUnit {
   /** Reference to the current branch predictor. */
   BranchPredictor& branchPredictor_;
 
-  uint16_t mopQueueSize_ = 0;
+  /** A loop buffer to supply a detected loop instruction stream. */
+  std::deque<loopBufferEntry> loopBuffer_;
 
-  std::deque<MacroOp> mopQueue_;
+  /** State of the loop buffer. */
+  LoopBufferState loopBufferState_ = LoopBufferState::IDLE;
 
-  uint8_t mopCacheTagBits_ = 0;
-
-  std::vector<std::pair<uint64_t, uint64_t>> mopCache_;
-
-  std::vector<uint64_t> requestedBlocks_;
+  /** The branch instruction that forms the loop. */
+  uint64_t loopBoundaryAddress_ = 0;
 
   /** The current program halt state. Set to `true` when the PC leaves the
    * instruction memory region, and set back to `false` if the PC is returned to
@@ -107,22 +127,24 @@ class FetchUnit {
   /** The number of cycles fetch terminated early due to a predicted branch. */
   uint64_t branchStalls_ = 0;
 
-  /** The number of branches fetched. */
-  uint64_t branchFetchedCount_ = 0;
-
   /** The size of a fetch block, in bytes. */
-  uint16_t blockSize_;
+  uint8_t blockSize_;
 
   /** A mask of the bits of the program counter to use for obtaining the block
    * address to fetch. */
   uint64_t blockMask_;
 
-  /** Let the following PipelineFetchUnitTest derived classes be a friend of
-   * this class to allow proper testing of 'tick' function. */
-  friend class PipelineFetchUnitTest_invalidMinBytesAtEndOfBuffer_Test;
-  friend class PipelineFetchUnitTest_minSizeInstructionAtEndOfBuffer_Test;
-  friend class PipelineFetchUnitTest_validMinSizeReadsDontComplete_Test;
-  friend class PipelineFetchUnitTest_invalidMinBytesreadsDontComplete_Test;
+  /** The buffer used to hold fetched instruction data. */
+  uint8_t* fetchBuffer_;
+
+  /** The amount of data currently in the fetch buffer. */
+  uint8_t bufferedBytes_ = 0;
+
+  /** The Fetch Unit's paused state - when an interupt has been signalled, the
+   * Fetch Unit must not fetch / increment the PC until a new process has been
+   * scheduled. This ensures the correct architectural state can be captured
+   * during a context switch. */
+  bool paused_ = false;
 };
 
 }  // namespace pipeline

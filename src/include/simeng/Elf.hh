@@ -89,46 +89,46 @@ struct Elf_Binary {
 /** A processed Executable and Linkable Format (ELF) file. */
 class Elf {
  public:
-  Elf(std::string path, std::string interpreterPath = "");
+  Elf(std::string path);
 
   ~Elf() {}
 
   /** Method to return the validity of the ELF parsing process. */
   bool isValid() const;
 
-  /** Returns true if the ELF is dynamically linked */
+  /***/
   bool isDynamic() const;
 
-  /** Get the parsed executable binary struct */
+  /***/
   std::shared_ptr<Elf_Binary> getExecutable() const;
 
-  /** Get the parsed interpreter binary struct */
+  /***/
   std::shared_ptr<Elf_Binary> getInterpreter() const;
 
  private:
   /** Bool which holds if the ELF parsing was done correctly. */
   bool isValid_ = false;
 
-  /** Path to the interpreter if dynamic linking is enabled */
+  /***/
   std::string interpreterPath_;
 
-  /** Indicates if the executable requires an interpreter */
-  bool isDynamic_ = false;
+  /***/
+  bool isDynamic_ = 0;
 
-  /** The executable binary parsed data */
+  /***/
   std::shared_ptr<Elf_Binary> executable_ = nullptr;
 
-  /** The interpreter binary parsed data */
+  /***/
   std::shared_ptr<Elf_Binary> interpreter_ = nullptr;
 
-  /** Parses the ELF header */
+  /***/
   Elf64_Ehdr parseElfEhdr(std::ifstream& elf_file);
 
-  /** Parses the ELF program headers */
+  /***/
   std::vector<Elf64_Phdr> parseElfPhdrs(
       std::ifstream& elf_file, Elf64_Ehdr& Ehdr);
 
-  /** Parses an entire ELF binary from the given file path */
+  /***/
   std::shared_ptr<Elf_Binary> parseElfBinary(std::string fpath);
 };
 

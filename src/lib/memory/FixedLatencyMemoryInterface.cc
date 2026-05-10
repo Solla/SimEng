@@ -1,19 +1,12 @@
-#include "simeng/memory/FixedLatencyMemoryInterface.hh"
+#include "simeng/FixedLatencyMemoryInterface.hh"
 
-#include <iostream>
+#include <cassert>
 
 namespace simeng {
 
-namespace memory {
-
-FixedLatencyMemoryInterface::FixedLatencyMemoryInterface(char* memory,
-                                                         size_t size,
-                                                         uint16_t latency,
-                                                         std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator)
-    : memory_(memory),
-      size_(size),
-      vaddrTranslator_(vaddrTranslator),
-      latency_(latency) {}
+FixedLatencyMemoryInterface::FixedLatencyMemoryInterface(
+    std::shared_ptr<memory::MMU> mmu, uint16_t latency)
+    : mmu_(mmu), latency_(latency) {}
 
 void FixedLatencyMemoryInterface::tick() {
   tickCounter_++;
@@ -27,42 +20,34 @@ void FixedLatencyMemoryInterface::tick() {
     }
 
     const auto& target = request.target;
+    uint64_t requestId = request.requestId;
 
     if (request.write) {
-      // Write: write data directly to memory
-      uint64_t paddr = target.address;
-      if (vaddrTranslator_) {
-        paddr = vaddrTranslator_(target.address, 0); // TID is 0
-      }
-
-      if (paddr + target.size > size_) {
-        std::cerr << "[SimEng:FixedLatencyMemoryInterface] Attempted to write "
-                     "beyond memory limit."
-                  << std::endl;
-        exit(1);
-      }
-
-      auto ptr = memory_ + paddr;
-      // Copy the data from the RegisterValue to memory
-      memcpy(ptr, request.data.getAsVector<char>(), target.size);
+      const char* wdata = request.data.getAsVector<char>();
+      std::vector<char> dt(wdata, wdata + target.size);
+      // Responses to write requests are ignored by passing in a nullptr
+      // callback because they don't contain any information relevant to the
+      // simulation.
+      mmu_->bufferRequest(
+          memory::DataPacket(target.address, target.size, memory::WRITE_REQUEST,
+                             requestId, dt),
+          nullptr);
     } else {
-      // Read: read data into `completedReads`
-      uint64_t paddr = target.address;
-      if (vaddrTranslator_) {
-        paddr = vaddrTranslator_(target.address, 0); // TID is 0
-      }
-
-      if (paddr + target.size > size_ ||
-          unsignedOverflow_(paddr, target.size)) {
-        // Read outside of memory; return an invalid value to signal a fault
-        completedReads_.push_back({target, RegisterValue(), request.requestId});
-      } else {
-        const char* ptr = memory_ + paddr;
-
-        // Copy the data at the requested memory address into a RegisterValue
+      // Instantiate a callback function which will be invoked with the response
+      // to a read request.
+      auto fn = [this, target,
+                 requestId](struct memory::DataPacket packet) -> void {
+        if (packet.inFault_) {
+          completedReads_.push_back({target, RegisterValue(), requestId});
+          return;
+        }
         completedReads_.push_back(
-            {target, RegisterValue(ptr, target.size), request.requestId});
-      }
+            {target, RegisterValue(packet.data_.data(), packet.size_),
+             requestId});
+      };
+      mmu_->bufferRequest(memory::DataPacket(target.address, target.size,
+                                             memory::READ_REQUEST, requestId),
+                          fn);
     }
 
     // Remove the request from the queue
@@ -94,5 +79,4 @@ bool FixedLatencyMemoryInterface::hasPendingRequests() const {
   return !pendingRequests_.empty();
 }
 
-}  // namespace memory
 }  // namespace simeng

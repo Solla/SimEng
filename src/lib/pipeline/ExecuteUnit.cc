@@ -13,13 +13,15 @@ ExecuteUnit::ExecuteUnit(
     std::function<void(const std::shared_ptr<Instruction>&)> handleLoad,
     std::function<void(const std::shared_ptr<Instruction>&)> handleStore,
     std::function<void(const std::shared_ptr<Instruction>&)> raiseException,
-    bool pipelined, const std::vector<uint16_t>& blockingGroups)
+    BranchPredictor& predictor, bool pipelined,
+    const std::vector<uint16_t>& blockingGroups)
     : input_(input),
       output_(output),
       forwardOperands_(forwardOperands),
       handleLoad_(handleLoad),
       handleStore_(handleStore),
       raiseException_(raiseException),
+      predictor_(predictor),
       pipelined_(pipelined),
       blockingGroups_(blockingGroups) {}
 
@@ -138,14 +140,20 @@ void ExecuteUnit::execute(std::shared_ptr<Instruction>& uop) {
 
   if (uop->isBranch()) {
     pc_ = uop->getBranchAddress();
+
+    // Update branch predictor with branch results
+    predictor_.update(uop->getInstructionAddress(), uop->wasBranchTaken(), pc_,
+                      uop->getBranchType());
+
     // Update the branch instruction counter
-    branchExecutedCount_++;
+    branchesExecuted_++;
 
     if (uop->wasBranchMispredicted()) {
       // Misprediction; flush the pipeline
       shouldFlush_ = true;
       flushAfter_ = uop->getInstructionId();
-      branchMispredictedCount_++;
+      // Update the branch misprediction counter
+      branchMispredicts_++;
     }
   }
 
@@ -157,7 +165,7 @@ void ExecuteUnit::execute(std::shared_ptr<Instruction>& uop) {
 
 bool ExecuteUnit::shouldFlush() const { return shouldFlush_; }
 uint64_t ExecuteUnit::getFlushAddress() const { return pc_; }
-uint64_t ExecuteUnit::getFlushInsnId() const { return flushAfter_; }
+uint64_t ExecuteUnit::getFlushSeqId() const { return flushAfter_; }
 
 void ExecuteUnit::purgeFlushed() {
   if (pipeline_.size() == 0) {
@@ -207,6 +215,24 @@ void ExecuteUnit::purgeFlushed() {
   }
 }
 
+uint64_t ExecuteUnit::getBranchExecutedCount() const {
+  return branchesExecuted_;
+}
+uint64_t ExecuteUnit::getBranchMispredictedCount() const {
+  return branchMispredicts_;
+}
+
+bool ExecuteUnit::isEmpty() {
+  // Execution unit is considered empty if no instructions are present in the
+  // pipeline_ and operationsStalled_ queues
+  return !(pipeline_.size() != 0 || operationsStalled_.size() != 0);
+}
+
+void ExecuteUnit::flush() {
+  pipeline_.clear();
+  operationsStalled_.clear();
+}
+
 uint64_t ExecuteUnit::getCycles() const { return cycles_; }
 
 bool ExecuteUnit::isEmpty() const {
@@ -216,14 +242,6 @@ bool ExecuteUnit::isEmpty() const {
     return false;
   }
   return true;
-}
-
-uint64_t ExecuteUnit::getBranchExecutedCount() const {
-  return branchExecutedCount_;
-}
-
-uint64_t ExecuteUnit::getBranchMispredictedCount() const {
-  return branchMispredictedCount_;
 }
 
 }  // namespace pipeline
