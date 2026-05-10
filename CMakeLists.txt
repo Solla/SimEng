@@ -37,7 +37,7 @@ FetchContent_Declare(
 # WARNING: When updating capstone version, we MUST make a new, discrete branch in the UoB-HPC Capstone fork to ensure
 #          current / previous SimEng versions continue to operate correctly.
 FetchContent_Declare(
-  capstone-lib
+  capstone
   GIT_REPOSITORY https://github.com/UoB-HPC/capstone.git
   GIT_TAG next-update # Branch for SimEng version 0.9.7
   GIT_PROGRESS TRUE
@@ -104,7 +104,7 @@ set(CAPSTONE_HPPA_SUPPORT OFF CACHE BOOL "Disable HPPA support")
 set(CAPSTONE_LOONGARCH_SUPPORT OFF CACHE BOOL "Disable LoongArch support")
 
 
-FetchContent_MakeAvailable_Args(capstone-lib EXCLUDE_FROM_ALL)
+FetchContent_MakeAvailable_Args(capstone EXCLUDE_FROM_ALL)
 include_directories("${capstone_BINARY_DIR}/include" "${capstone_SOURCE_DIR}/include")
 
 # Enable the single RYML header to be packaged into the SimEng shared library

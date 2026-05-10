@@ -49,6 +49,7 @@ set(SIMENG_SOURCES
     SpecialFileDirGen.cc
 )
 
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/simeng)
 configure_file(${capstone_SOURCE_DIR}/arch/AArch64/AArch64GenInstrInfo.inc AArch64GenInstrInfo.inc COPYONLY)
 configure_file(${capstone_SOURCE_DIR}/arch/RISCV/RISCVGenInstrInfo.inc RISCVGenInstrInfo.inc COPYONLY)
 
@@ -70,4 +71,5 @@ install(TARGETS libsimeng DESTINATION lib)
 get_target_property(SIMENG_COMPILE_OPTIONS libsimeng COMPILE_OPTIONS)
 get_target_property(SIMENG_COMPILE_DEFINITIONS libsimeng COMPILE_DEFINITIONS)
 get_target_property(SIMENG_VERSION libsimeng VERSION)
+file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/simeng)
 configure_file(${PROJECT_SOURCE_DIR}/src/include/simeng/version.hh.in ${CMAKE_CURRENT_BINARY_DIR}/simeng/version.hh)
