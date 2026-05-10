@@ -14,8 +14,10 @@ Fetch:
   Loop-Buffer-Size: 16
   Loop-Detection-Threshold: 4
 Process-Image:
-  Heap-Size: 1073741824
-  Stack-Size: 1048576
+  Heap-Size: 2147483648
+  Stack-Size: 2097152
+  Dynamic-Linking: True
+  Interpreter-Path: /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
 Register-Set:
   GeneralPurpose-Count: 394
   FloatingPoint/SVE-Count: 432

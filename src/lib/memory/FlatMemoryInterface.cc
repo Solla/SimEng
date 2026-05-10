@@ -6,18 +6,23 @@ namespace simeng {
 
 namespace memory {
 
-FlatMemoryInterface::FlatMemoryInterface(char* memory, size_t size)
-    : memory_(memory), size_(size) {}
+FlatMemoryInterface::FlatMemoryInterface(char* memory, size_t size, std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator)
+    : memory_(memory), size_(size), vaddrTranslator_(vaddrTranslator) {}
 
 void FlatMemoryInterface::requestRead(const MemoryAccessTarget& target,
                                       uint64_t requestId) {
-  if (target.address + target.size > size_) {
+  uint64_t paddr = target.address;
+  if (vaddrTranslator_) {
+    paddr = vaddrTranslator_(target.address, 0); // TID is 0
+  }
+
+  if (paddr + target.size > size_) {
     // Read outside of memory; return an invalid value to signal a fault
     completedReads_.push_back({target, RegisterValue(), requestId});
     return;
   }
 
-  const char* ptr = memory_ + target.address;
+  const char* ptr = memory_ + paddr;
 
   // Copy the data at the requested memory address into a RegisterValue
   completedReads_.push_back(
@@ -26,14 +31,19 @@ void FlatMemoryInterface::requestRead(const MemoryAccessTarget& target,
 
 void FlatMemoryInterface::requestWrite(const MemoryAccessTarget& target,
                                        const RegisterValue& data) {
-  if (target.address + target.size > size_) {
+  uint64_t paddr = target.address;
+  if (vaddrTranslator_) {
+    paddr = vaddrTranslator_(target.address, 0); // TID is 0
+  }
+
+  if (paddr + target.size > size_) {
     std::cerr << "[SimEng:FlatLatencyMemoryInterface] Attempted to write "
                  "beyond memory limit."
               << std::endl;
     exit(1);
   }
 
-  auto ptr = memory_ + target.address;
+  auto ptr = memory_ + paddr;
   // Copy the data from the RegisterValue to memory
   memcpy(ptr, data.getAsVector<char>(), target.size);
 }

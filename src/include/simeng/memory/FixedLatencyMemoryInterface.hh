@@ -2,6 +2,7 @@
 
 #include <queue>
 #include <vector>
+#include <functional>
 
 #include "simeng/memory/MemoryInterface.hh"
 
@@ -41,7 +42,7 @@ struct FixedLatencyMemoryInterfaceRequest {
 /** A memory interface where all requests respond with a fixed latency. */
 class FixedLatencyMemoryInterface : public MemoryInterface {
  public:
-  FixedLatencyMemoryInterface(char* memory, size_t size, uint16_t latency);
+  FixedLatencyMemoryInterface(char* memory, size_t size, uint16_t latency, std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator = nullptr);
 
   /** Queue a read request from the supplied target location.
    *
@@ -70,8 +71,11 @@ class FixedLatencyMemoryInterface : public MemoryInterface {
   char* memory_;
   /** The size of accessible memory. */
   size_t size_;
-  /** A vector containing all completed read requests. */
+  /** Vector of newly completed but not yet returned read requests. */
   std::vector<MemoryReadResult> completedReads_;
+
+  /** Virtual Address Translator */
+  std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator_;
 
   /** A queue containing all pending memory requests. */
   std::queue<FixedLatencyMemoryInterfaceRequest> pendingRequests_;

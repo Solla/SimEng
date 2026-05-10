@@ -104,6 +104,10 @@ Core::Core(memory::MemoryInterface& instructionMemory,
 void Core::tick() {
   ticks_++;
 
+  if (ticks_ < 20) {
+    std::cout << "[SimEng:Core:Debug] Cycle " << ticks_ << " | PC: 0x" << std::hex << fetchUnit_.getPC() << std::dec << " | Retired: " << reorderBuffer_.getInstructionsCommittedCount() << std::endl;
+  }
+
   if (hasHalted_) return;
 
   if (exceptionHandler_ != nullptr) {
@@ -147,7 +151,12 @@ void Core::tick() {
   }
 
   // Commit instructions from ROB
+  uint64_t before = reorderBuffer_.getInstructionsCommittedCount();
   reorderBuffer_.commit(commitWidth_);
+  uint64_t after = reorderBuffer_.getInstructionsCommittedCount();
+  if (after > before && ticks_ < 100) {
+     std::cout << "[SimEng:Core:Debug] Retired " << (after - before) << " instructions in cycle " << ticks_ << std::endl;
+  }
 
   if (exceptionGenerated_) {
     handleException();

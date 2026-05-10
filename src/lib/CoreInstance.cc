@@ -1,4 +1,7 @@
+#include <iomanip>
 #include "simeng/CoreInstance.hh"
+
+#include "simeng/kernel/Constants.hh"
 
 namespace simeng {
 
@@ -6,16 +9,14 @@ CoreInstance::CoreInstance(std::string executablePath,
                            std::vector<std::string> executableArgs,
                            ryml::ConstNodeRef config)
     : config_(config),
-      kernel_(kernel::Linux(
-          config_["CPU-Info"]["Special-File-Dir-Path"].as<std::string>())) {
+      kernel_(config_) {
   generateCoreModel(executablePath, executableArgs);
 }
 
 CoreInstance::CoreInstance(uint8_t* assembledSource, size_t sourceSize,
                            ryml::ConstNodeRef config)
     : config_(config),
-      kernel_(kernel::Linux(
-          config_["CPU-Info"]["Special-File-Dir-Path"].as<std::string>())),
+  kernel_(config_),
       source_(assembledSource),
       sourceSize_(sourceSize),
       assembledSource_(true) {
@@ -85,7 +86,7 @@ void CoreInstance::createProcess(std::string executablePath,
     std::vector<std::string> commandLine = {executablePath};
     commandLine.insert(commandLine.end(), executableArgs.begin(),
                        executableArgs.end());
-    process_ = std::make_unique<kernel::LinuxProcess>(commandLine, config_);
+    process_ = std::make_unique<kernel::LinuxProcess>(commandLine, kernel_, config_);
 
     // Raise error if created process is not valid
     if (!process_->isValid()) {
@@ -96,7 +97,7 @@ void CoreInstance::createProcess(std::string executablePath,
   } else if (assembledSource_) {
     // Create a process image from the source code assembled by LLVM.
     process_ = std::make_unique<kernel::LinuxProcess>(
-        span<const uint8_t>(source_, sourceSize_), config_);
+        span<const uint8_t>(source_, sourceSize_), kernel_, config_);
     // Raise error if created process is not valid
     if (!process_->isValid()) {
       std::cerr << "[SimEng:CoreInstance] Could not create process based on "
@@ -117,15 +118,15 @@ void CoreInstance::createProcess(std::string executablePath,
   createProcessMemory();
 
   // Create the OS kernel with the process
-  kernel_.createProcess(*process_.get());
+  kernel_.createProcess(process_.get());
 
   return;
 }
 
 void CoreInstance::createProcessMemory() {
-  // Get the process image and its size
-  processMemory_ = process_->getProcessImage();
-  processMemorySize_ = process_->getProcessImageSize();
+  // Get the process image and its size from kernel's physical memory manager
+  processMemory_ = std::shared_ptr<char>(kernel_.getMemory(), [](char*){});
+  processMemorySize_ = kernel_.getMemorySize();
 
   return;
 }
@@ -135,12 +136,12 @@ void CoreInstance::createL1InstructionMemory(
   // Create a L1I cache instance based on type supplied
   if (type == memory::MemInterfaceType::Flat) {
     instructionMemory_ = std::make_shared<memory::FlatMemoryInterface>(
-        processMemory_.get(), processMemorySize_);
+        kernel_.getMemory(), kernel_.getMemorySize(), kernel_.getVAddrTranslator());
   } else if (type == memory::MemInterfaceType::Fixed) {
     uint16_t accessLat =
         config_["LSQ-L1-Interface"]["Access-Latency"].as<uint16_t>();
     instructionMemory_ = std::make_shared<memory::FixedLatencyMemoryInterface>(
-        processMemory_.get(), processMemorySize_, accessLat);
+        kernel_.getMemory(), kernel_.getMemorySize(), accessLat, kernel_.getVAddrTranslator());
   } else {
     std::cerr
         << "[SimEng:CoreInstance] Unsupported memory interface type used in "
@@ -166,12 +167,12 @@ void CoreInstance::createL1DataMemory(const memory::MemInterfaceType type) {
   // Create a L1D cache instance based on type supplied
   if (type == memory::MemInterfaceType::Flat) {
     dataMemory_ = std::make_shared<memory::FlatMemoryInterface>(
-        processMemory_.get(), processMemorySize_);
+        kernel_.getMemory(), kernel_.getMemorySize(), kernel_.getVAddrTranslator());
   } else if (type == memory::MemInterfaceType::Fixed) {
     uint16_t accessLat =
         config_["LSQ-L1-Interface"]["Access-Latency"].as<uint16_t>();
     dataMemory_ = std::make_shared<memory::FixedLatencyMemoryInterface>(
-        processMemory_.get(), processMemorySize_, accessLat);
+        kernel_.getMemory(), kernel_.getMemorySize(), accessLat, kernel_.getVAddrTranslator());
   } else {
     std::cerr << "[SimEng:CoreInstance] Unsupported memory interface type used "
                  "in createL1DataMemory()."
@@ -289,6 +290,18 @@ void CoreInstance::createCore() {
   }
 
   createSpecialFileDirectory();
+
+  // DEBUG: Print first 16 bytes at entry point
+  uint64_t paddr = kernel_.getVAddrTranslator()(entryPoint, 0);
+  if (!(paddr & kernel::masks::faults::pagetable::FAULT)) {
+    std::cout << "[SimEng:CoreInstance] Code at Entry Point (0x" << std::hex << entryPoint << "): ";
+    for (int i = 0; i < 16; i++) {
+      std::cout << std::setfill('0') << std::setw(2) << (int)(uint8_t)kernel_.getMemory()[paddr + i] << " ";
+    }
+    std::cout << std::dec << std::endl;
+  } else {
+    std::cout << "[SimEng:CoreInstance] Entry Point 0x" << std::hex << entryPoint << " FAULTED during translation!" << std::dec << std::endl;
+  }
 
   return;
 }

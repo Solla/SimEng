@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <functional>
 
 #include "simeng/memory/MemoryInterface.hh"
 
@@ -11,7 +12,7 @@ namespace memory {
 /** A memory interface to a flat memory system. */
 class FlatMemoryInterface : public MemoryInterface {
  public:
-  FlatMemoryInterface(char* memory, size_t size);
+  FlatMemoryInterface(char* memory, size_t size, std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator = nullptr);
 
   /** Request a read from the supplied target location.
    *
@@ -42,6 +43,8 @@ class FlatMemoryInterface : public MemoryInterface {
   size_t size_;
   /** A vector containing all completed read requests. */
   std::vector<MemoryReadResult> completedReads_;
+  /** Virtual Address Translator */
+  std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator_;
 };
 
 }  // namespace memory

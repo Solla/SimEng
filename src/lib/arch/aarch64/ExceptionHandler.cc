@@ -27,12 +27,17 @@ bool ExceptionHandler::tick() { return resumeHandling_(); }
 
 bool ExceptionHandler::init() {
   InstructionException exception = instruction_.getException();
+  if (exception != InstructionException::None) {
+    std::cout << "[SimEng:ExceptionHandler] Handling exception: " << (int)exception << " for PC: 0x" << std::hex << instruction_.getInstructionAddress() << std::dec << std::endl;
+  }
+
   const auto& registerFileSet = core_.getArchitecturalRegisterFileSet();
 
   if (exception == InstructionException::SupervisorCall) {
     // Retrieve syscall ID held in register x8
     auto syscallId =
         registerFileSet.get({RegisterType::GENERAL, 8}).get<uint64_t>();
+    std::cout << "[SimEng:ExceptionHandler] Syscall: " << syscallId << " for PC: 0x" << std::hex << instruction_.getInstructionAddress() << std::dec << std::endl;
 
     ProcessStateChange stateChange;
     switch (syscallId) {
@@ -582,26 +587,16 @@ bool ExceptionHandler::init() {
         int fd = registerFileSet.get(R4).get<int>();
         off_t offset = registerFileSet.get(R5).get<off_t>();
 
-        // Currently, only support mmap from a malloc() call whose arguments
-        // match the first condition
-        if (addr == 0 && flags == 34 && fd == -1 && offset == 0) {
-          uint64_t result = linux_.mmap(addr, length, prot, flags, fd, offset);
-          // An allocation of 0 signifies a failed allocation, return value from
-          // syscall is changed to -1
-          if (result == 0) {
-            stateChange = {
-                ChangeType::REPLACEMENT, {R0}, {static_cast<int64_t>(-1)}};
-          } else {
-            stateChange = {ChangeType::REPLACEMENT, {R0}, {result}};
-          }
-          break;
+        uint64_t result = linux_.mmap(addr, length, prot, flags, fd, offset);
+        // An allocation of 0 signifies a failed allocation, return value from
+        // syscall is changed to -1
+        if (result == 0) {
+          stateChange = {
+              ChangeType::REPLACEMENT, {R0}, {static_cast<int64_t>(-1)}};
         } else {
-          printException(instruction_);
-          std::cout << "\n[SimEng:ExceptionHandler] Unsupported arguments for "
-                       "syscall: "
-                    << syscallId << std::endl;
-          return fatal();
+          stateChange = {ChangeType::REPLACEMENT, {R0}, {result}};
         }
+        break;
       }
       case 226: {  // mprotect
         // mprotect is not supported

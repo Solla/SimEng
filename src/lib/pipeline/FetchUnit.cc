@@ -127,7 +127,10 @@ void FetchUnit::tick() {
         // Predicted as taken; set PC to predicted target address
         pc_ = prediction.target;
       }
-      hasHalted_ = (pc_ >= programByteLength_);
+      // For dynamic linking, the PC can be very high (e.g. 0x4000...).
+      // Only halt if PC is within the lower 4GB and exceeds programByteLength_,
+      // or if it's explicitly 0.
+      hasHalted_ = (pc_ == 0) || (pc_ < 0x100000000ULL && pc_ >= programByteLength_);
     } else {
       // Request new block from instruction memory if there isn't an existing
       // request
@@ -151,8 +154,10 @@ void FetchUnit::updatePC(uint64_t address) {
   pc_ = address;
   requestedBlocks_.clear();
   mopQueue_.clear();
-  hasHalted_ = (pc_ >= programByteLength_);
+  hasHalted_ = (pc_ == 0) || (pc_ < 0x100000000ULL && pc_ >= programByteLength_);
 }
+
+uint64_t FetchUnit::getPC() const { return pc_; }
 
 uint64_t FetchUnit::getBranchStalls() const { return branchStalls_; }
 

@@ -975,6 +975,36 @@ void Instruction::execute() {
             [](uint8_t x, uint8_t y) -> bool { return (x == y); });
         break;
       }
+      case Opcode::AArch64_CMEQv2i64rz: {  // cmeq vd.2d, vn.2d, #0
+        results_[0] = vecCompare<uint64_t, 2>(
+            sourceValues_, true,
+            [](uint64_t x, uint64_t y) -> bool { return (x == y); });
+        break;
+      }
+      case Opcode::AArch64_CMEQv1i64rz: {  // cmeq dd, dn, #0
+        results_[0] = vecCompare<uint64_t, 1>(
+            sourceValues_, true,
+            [](uint64_t x, uint64_t y) -> bool { return (x == y); });
+        break;
+      }
+      case Opcode::AArch64_CMEQv8i16rz: {  // cmeq vd.8h, vn.8h, #0
+        results_[0] = vecCompare<uint16_t, 8>(
+            sourceValues_, true,
+            [](uint16_t x, uint16_t y) -> bool { return (x == y); });
+        break;
+      }
+      case Opcode::AArch64_CMEQv4i16rz: {  // cmeq vd.4h, vn.4h, #0
+        results_[0] = vecCompare<uint16_t, 4>(
+            sourceValues_, true,
+            [](uint16_t x, uint16_t y) -> bool { return (x == y); });
+        break;
+      }
+      case Opcode::AArch64_CMEQv2i32rz: {  // cmeq vd.2s, vn.2s, #0
+        results_[0] = vecCompare<uint32_t, 2>(
+            sourceValues_, true,
+            [](uint32_t x, uint32_t y) -> bool { return (x == y); });
+        break;
+      }
       case Opcode::AArch64_CMHIv4i32: {  // cmhi vd.4s, vn.4s, vm.4s
         results_[0] = vecCompare<uint32_t, 4>(
             sourceValues_, false,

@@ -8,8 +8,12 @@ namespace memory {
 
 FixedLatencyMemoryInterface::FixedLatencyMemoryInterface(char* memory,
                                                          size_t size,
-                                                         uint16_t latency)
-    : memory_(memory), size_(size), latency_(latency) {}
+                                                         uint16_t latency,
+                                                         std::function<uint64_t(uint64_t, uint64_t)> vaddrTranslator)
+    : memory_(memory),
+      size_(size),
+      vaddrTranslator_(vaddrTranslator),
+      latency_(latency) {}
 
 void FixedLatencyMemoryInterface::tick() {
   tickCounter_++;
@@ -26,24 +30,34 @@ void FixedLatencyMemoryInterface::tick() {
 
     if (request.write) {
       // Write: write data directly to memory
-      if (target.address + target.size > size_) {
+      uint64_t paddr = target.address;
+      if (vaddrTranslator_) {
+        paddr = vaddrTranslator_(target.address, 0); // TID is 0
+      }
+
+      if (paddr + target.size > size_) {
         std::cerr << "[SimEng:FixedLatencyMemoryInterface] Attempted to write "
                      "beyond memory limit."
                   << std::endl;
         exit(1);
       }
 
-      auto ptr = memory_ + target.address;
+      auto ptr = memory_ + paddr;
       // Copy the data from the RegisterValue to memory
       memcpy(ptr, request.data.getAsVector<char>(), target.size);
     } else {
       // Read: read data into `completedReads`
-      if (target.address + target.size > size_ ||
-          unsignedOverflow_(target.address, target.size)) {
+      uint64_t paddr = target.address;
+      if (vaddrTranslator_) {
+        paddr = vaddrTranslator_(target.address, 0); // TID is 0
+      }
+
+      if (paddr + target.size > size_ ||
+          unsignedOverflow_(paddr, target.size)) {
         // Read outside of memory; return an invalid value to signal a fault
         completedReads_.push_back({target, RegisterValue(), request.requestId});
       } else {
-        const char* ptr = memory_ + target.address;
+        const char* ptr = memory_ + paddr;
 
         // Copy the data at the requested memory address into a RegisterValue
         completedReads_.push_back(

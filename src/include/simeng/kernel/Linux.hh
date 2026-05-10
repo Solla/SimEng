@@ -6,7 +6,10 @@
 #include <vector>
 
 #include "simeng/kernel/LinuxProcess.hh"
+#include "simeng/kernel/PageFrameAllocator.hh"
 #include "simeng/version.hh"
+#include <functional>
+#include "simeng/config/yaml/ryml.hh"
 
 namespace simeng {
 namespace kernel {
@@ -65,6 +68,8 @@ struct vm_area_struct {
 
 /** A state container for a Linux process. */
 struct LinuxProcessState {
+  /** Pointer to the process object */
+  LinuxProcess* process;
   /** The process ID. */
   int64_t pid;
   /** The path of the executable that created this process. */
@@ -79,10 +84,6 @@ struct LinuxProcessState {
   uint64_t mmapRegion;
   /** The page size of the process memory. */
   uint64_t pageSize;
-  /** Contiguous memory allocations from the mmap system call. */
-  std::vector<vm_area_struct> contiguousAllocations;
-  /** Non-Contiguous memory allocations from the mmap system call. */
-  std::vector<vm_area_struct> nonContiguousAllocations;
 
   // Thread state
   // TODO: Support multiple threads per process
@@ -131,11 +132,10 @@ struct linux_dirent64 {
    to Linux system calls. */
 class Linux {
  public:
-  Linux(const std::string specialFiledirPath)
-      : specialFilesDir_(specialFiledirPath) {}
+  Linux(ryml::ConstNodeRef config);
 
   /** Create a new Linux process running above this kernel. */
-  void createProcess(const LinuxProcess& process);
+  void createProcess(LinuxProcess* process);
 
   /** Retrieve the initial stack pointer. */
   uint64_t getInitialStackPointer() const;
@@ -240,6 +240,24 @@ class Linux {
   /** The maximum size of a filesystem path. */
   static const size_t LINUX_PATH_MAX = 4096;
 
+  /** Allocate physical memory frames */
+  uint64_t requestPageFrames(size_t size);
+
+  /** Handle virtual address translation for a given process */
+  uint64_t handleVAddrTranslation(uint64_t vaddr, uint64_t pid);
+
+  /** Get a lambda capable of translating virtual addresses to physical offsets */
+  std::function<uint64_t(uint64_t, uint64_t)> getVAddrTranslator();
+
+  /** Get a lambda capable of sending data to physical memory */
+  std::function<void(std::vector<char>, uint64_t, size_t)> getSendToMem();
+
+  /** Retrieve the physical memory buffer */
+  char* getMemory();
+
+  /** Retrieve the size of physical memory buffer */
+  size_t getMemorySize() const;
+
  private:
   /** Return the host directory file descriptor mapped to by the virtual dfd
    * given to syscall. If vdfd is Linux::AT_FDCWD (-100) then Host::AT_FDCWD is
@@ -262,6 +280,15 @@ class Linux {
 
   /** Vector of all currently supported special file paths & files.*/
   std::vector<std::string> supportedSpecialFiles_;
+
+  /** Physical memory buffer managed by the OS */
+  std::vector<char> physicalMemory_;
+
+  /** Page Frame Allocator */
+  PageFrameAllocator pageFrameAllocator_;
+ 
+  /** Host-backed file mappings manager */
+  HostBackedFileMMaps hostBackedFileMMaps_;
 };
 
 }  // namespace kernel

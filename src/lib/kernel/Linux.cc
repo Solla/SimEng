@@ -9,23 +9,61 @@
 #include <sys/termios.h>
 #include <sys/uio.h>
 #include <unistd.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <iostream>
+#include <filesystem>
+
+namespace {
+uint64_t upAlign(uint64_t value, uint64_t boundary) {
+  auto remainder = value % boundary;
+  if (remainder == 0) {
+    return value;
+  }
+  return value + (boundary - remainder);
+}
+}  // namespace
 
 namespace simeng {
 namespace kernel {
 
-void Linux::createProcess(const LinuxProcess& process) {
-  assert(process.isValid() && "Attempted to use an invalid process");
+Linux::Linux(ryml::ConstNodeRef config)
+    : specialFilesDir_(config["CPU-Info"]["Special-File-Dir-Path"].as<std::string>()),
+      pageFrameAllocator_(config.has_child("Simulation-Memory") && config["Simulation-Memory"].has_child("Size") 
+                          ? config["Simulation-Memory"]["Size"].as<uint64_t>() : 4294967296ULL) {
+  uint64_t memSize = config.has_child("Simulation-Memory") && config["Simulation-Memory"].has_child("Size") 
+                          ? config["Simulation-Memory"]["Size"].as<uint64_t>() : 4294967296ULL;
+  physicalMemory_.resize(memSize, '\0');
+  std::cout << "[SimEng:Linux:Debug] Special File Directory: '" << specialFilesDir_ << "'" << std::endl;
+  std::cout << "[SimEng:Linux:Debug] specialFilesDir_ bytes:";
+  for (unsigned char c : specialFilesDir_) std::cout << " " << std::hex << (int)c << std::dec;
+  std::cout << std::endl;
+  std::cout << "[SimEng:Linux:Debug] Current Working Directory: " << std::filesystem::current_path() << std::endl;
+  
+  DIR *dir;
+  struct dirent *ent;
+  if ((dir = opendir("/usr/aarch64-linux-gnu/usr/lib")) != NULL) {
+    std::cout << "[SimEng:Linux:Debug] Contents of /usr/aarch64-linux-gnu/usr/lib:" << std::endl;
+    while ((ent = readdir(dir)) != NULL) {
+      std::cout << "  " << ent->d_name << std::endl;
+    }
+    closedir(dir);
+  } else {
+    std::cout << "[SimEng:Linux:Debug] Could not open /usr/aarch64-linux-gnu/usr/lib: " << strerror(errno) << std::endl;
+  }
+}
+
+void Linux::createProcess(LinuxProcess* process) {
+  assert(process->isValid() && "Attempted to use an invalid process");
   assert(processStates_.size() == 0 && "Multiple processes not yet supported");
-  processStates_.push_back({0,  // TODO: create unique PIDs
-                            process.getPath(), process.getHeapStart(),
-                            process.getHeapStart(),
-                            process.getInitialStackPointer(),
-                            process.getMmapStart(), process.getPageSize()});
+  processStates_.push_back({process, 0,  // TODO: create unique PIDs
+                            process->getPath(), process->getHeapStart(),
+                            process->getHeapStart(),
+                            process->getInitialStackPointer(),
+                            process->getMmapStart(), process->getPageSize()});
   processStates_.back().fileDescriptorTable.push_back(STDIN_FILENO);
   processStates_.back().fileDescriptorTable.push_back(STDOUT_FILENO);
   processStates_.back().fileDescriptorTable.push_back(STDERR_FILENO);
@@ -62,8 +100,14 @@ int64_t Linux::getHostDirFD(int64_t vdfd) {
 }
 
 std::string Linux::getSpecialFile(const std::string filename) {
-  for (auto prefix : {"/dev/", "/proc/", "/sys/"}) {
+  for (auto prefix : {"/dev", "/proc", "/sys", "/lib", "/usr/lib"}) {
     if (strncmp(filename.c_str(), prefix, strlen(prefix)) == 0) {
+      // If it's a library path, always allow mapping
+      if (strncmp(prefix, "/lib", 4) == 0 ||
+          strncmp(prefix, "/usr/lib", 8) == 0) {
+        return specialFilesDir_ + filename;
+      }
+
       for (size_t i = 0; i < supportedSpecialFiles_.size(); i++) {
         if (filename.find(supportedSpecialFiles_[i]) != std::string::npos) {
           std::cerr << "[SimEng:Linux] Using Special File: " << filename.c_str()
@@ -92,13 +136,8 @@ uint64_t Linux::getInitialStackPointer() const {
 int64_t Linux::brk(uint64_t address) {
   assert(processStates_.size() > 0 &&
          "Attempted to move the program break before creating a process");
-
-  auto& state = processStates_[0];
-  // Move the break if it's within the heap region
-  if (address > state.startBrk) {
-    state.currentBrk = address;
-  }
-  return state.currentBrk;
+ 
+  return processStates_[0].process->getMemRegion().updateBrkRegion(address);
 }
 
 uint64_t Linux::clockGetTime(uint64_t clkId, uint64_t systemTimer,
@@ -130,18 +169,64 @@ int64_t Linux::ftruncate(uint64_t fd, uint64_t length) {
   return retval;
 }
 
+uint64_t Linux::requestPageFrames(size_t size) {
+  return pageFrameAllocator_.allocate(size);
+}
+
+uint64_t Linux::handleVAddrTranslation(uint64_t vaddr, uint64_t pid) {
+  auto process = processStates_[pid].process;
+  uint64_t translation = process->translate(vaddr);
+  uint64_t faultCode = masks::faults::getFaultCode(translation);
+
+  if (faultCode != masks::faults::pagetable::TRANSLATE) return translation;
+
+  uint64_t addr = process->handlePageFault(vaddr);
+  faultCode = masks::faults::getFaultCode(addr);
+
+  if (faultCode == masks::faults::pagetable::MAP) {
+    std::cerr << "[SimEng:Linux] Failed to create mapping during PageFault "
+                 "caused by Vaddr: "
+              << vaddr << "( TID: " << pid << " )" << std::endl;
+    std::exit(1);
+  }
+
+  return addr;
+}
+
+std::function<uint64_t(uint64_t, uint64_t)> Linux::getVAddrTranslator() {
+  auto fn = [this](uint64_t vaddr, uint64_t pid) -> uint64_t {
+    return handleVAddrTranslation(vaddr, pid);
+  };
+  return fn;
+}
+
+std::function<void(std::vector<char>, uint64_t, size_t)> Linux::getSendToMem() {
+  auto fn = [this](std::vector<char> data, uint64_t paddr, size_t size) {
+    std::memcpy(physicalMemory_.data() + paddr, data.data(), size);
+  };
+  return fn;
+}
+
+char* Linux::getMemory() {
+  return physicalMemory_.data();
+}
+ 
+uint64_t Linux::getMemorySize() const {
+  return physicalMemory_.size();
+}
+
 int64_t Linux::faccessat(int64_t dfd, const std::string& filename, int64_t mode,
                          int64_t flag) {
-  // Resolve absolute path to target file
-  std::string new_pathname;
-
-  // Alter special file path to point to SimEng one (if filename points to
-  // special file)
-  new_pathname = Linux::getSpecialFile(filename);
-
-  // Get host dirfd. May return -1 in case of no mapping, pass through to host
-  // faccessat to deal with this
   int64_t hostDfd = Linux::getHostDirFD(dfd);
+  std::cout << "[SimEng:Linux:Debug] faccessat(dfd=" << dfd << " (hostDfd=" << hostDfd << "), path=\"" << filename << "\")" << std::endl;
+  
+  std::string new_pathname;
+  if (filename[0] == '/') {
+    new_pathname = Linux::getSpecialFile(filename);
+  } else {
+    // Relative path, depends on hostDfd
+    new_pathname = filename;
+  }
 
   // Pass call through to host
   int64_t retval = ::faccessat(hostDfd, new_pathname.c_str(), mode, flag);
@@ -176,11 +261,8 @@ int64_t Linux::close(int64_t vfd) {
 int64_t Linux::newfstatat(int64_t dfd, const std::string& filename, stat& out,
                           int64_t flag) {
   // Resolve absolute path to target file
-  std::string new_pathname;
-
-  // Alter special file path to point to SimEng one (if filename points to
-  // special file)
-  new_pathname = Linux::getSpecialFile(filename);
+  std::string new_pathname = Linux::getSpecialFile(filename);
+  std::cout << "[SimEng:Linux:Debug] newfstatat(dfd=" << dfd << ", path=\"" << filename << "\", new_path=\"" << new_pathname << "\")" << std::endl;
 
   // Get host dirfd. May return -1 in case of no mapping, pass through to host
   // fstatat to deal with this
@@ -204,6 +286,11 @@ int64_t Linux::newfstatat(int64_t dfd, const std::string& filename, stat& out,
   // Pass call through to host
   struct ::stat statbuf;
   int64_t retval = ::fstatat(hostDfd, new_pathname.c_str(), &statbuf, flag);
+  if (retval < 0) {
+    int err = errno;
+    std::cout << "[SimEng:Linux:Debug] newfstatat failed: " << strerror(err) << " (errno=" << err << ") for " << new_pathname << std::endl;
+    return -err;
+  }
 
   // Copy results to output struct
   out.dev = statbuf.st_dev;
@@ -239,16 +326,22 @@ int64_t Linux::newfstatat(int64_t dfd, const std::string& filename, stat& out,
 }
 
 int64_t Linux::fstat(int64_t fd, stat& out) {
+  std::cout << "[SimEng:Linux:Debug] fstat(fd=" << fd << ")" << std::endl;
   assert(fd > 0 && static_cast<size_t>(fd) <
                        processStates_[0].fileDescriptorTable.size());
   int64_t hfd = processStates_[0].fileDescriptorTable[fd];
   if (hfd < 0) {
-    return EBADF;
+    return -EBADF;
   }
 
   // Pass call through to host
   struct ::stat statbuf;
   int64_t retval = ::fstat(hfd, &statbuf);
+  if (retval < 0) {
+    int err = errno;
+    std::cout << "[SimEng:Linux:Debug] fstat failed: " << strerror(err) << " (errno=" << err << ") for fd=" << fd << std::endl;
+    return -err;
+  }
 
   // Copy results to output struct
   out.dev = statbuf.st_dev;
@@ -382,84 +475,23 @@ uint64_t Linux::lseek(int64_t fd, uint64_t offset, int64_t whence) {
 }
 
 int64_t Linux::munmap(uint64_t addr, size_t length) {
-  LinuxProcessState* lps = &processStates_[0];
-  if (addr % lps->pageSize != 0) {
-    // addr must be a multiple of the process page size
-    return -1;
-  };
-  vm_area_struct alloc;
-  // Find addr in allocations
-  for (size_t i = 0; i < lps->contiguousAllocations.size(); i++) {
-    alloc = lps->contiguousAllocations[i];
-    if (alloc.vm_start == addr) {
-      if ((alloc.vm_end - alloc.vm_start) < length) {
-        // Length must not be larger than the original allocation
-        return -1;
-      }
-      if (i != 0) {
-        lps->contiguousAllocations[i - 1].vm_next =
-            lps->contiguousAllocations[i].vm_next;
-      }
-      lps->contiguousAllocations.erase(lps->contiguousAllocations.begin() + i);
-      return 0;
-    }
-  }
-
-  for (size_t j = 0; j < lps->nonContiguousAllocations.size(); j++) {
-    alloc = lps->nonContiguousAllocations[j];
-    if (alloc.vm_start == addr) {
-      if ((alloc.vm_end - alloc.vm_start) < length) {
-        // Length must not be larger than the original allocation
-        return -1;
-      }
-      lps->nonContiguousAllocations.erase(
-          lps->nonContiguousAllocations.begin() + j);
-      return 0;
-    }
-  }
-  // Not an error if the indicated range does not contain any mapped pages
-  return 0;
+  return processStates_[0].process->getMemRegion().unmapRegion(addr, length);
 }
 
-uint64_t Linux::mmap(uint64_t addr, size_t length, [[maybe_unused]] int prot,
-                     [[maybe_unused]] int flags, [[maybe_unused]] int fd,
-                     [[maybe_unused]] off_t offset) {
-  LinuxProcessState* lps = &processStates_[0];
-  std::shared_ptr<struct vm_area_struct> newAlloc(new vm_area_struct);
-  if (addr == 0) {  // Kernel decides allocation
-    if (lps->contiguousAllocations.size() > 1) {
-      // Determine if the new allocation can fit between existing allocations,
-      // append to end of allocations if not
-      for (auto& alloc : lps->contiguousAllocations) {
-        if (alloc.vm_next != NULL &&
-            (alloc.vm_next->vm_start - alloc.vm_end) >= length) {
-          newAlloc->vm_start = alloc.vm_end;
-          // Re-link contiguous allocation to include new allocation
-          newAlloc->vm_next = alloc.vm_next;
-          alloc.vm_next = newAlloc;
-        }
-      }
-      if (newAlloc->vm_start == 0) {
-        newAlloc->vm_start = lps->contiguousAllocations.back().vm_end;
-        lps->contiguousAllocations.back().vm_next = newAlloc;
-      }
-    } else if (lps->contiguousAllocations.size() > 0) {
-      // Append allocation to end of list and link first entry to new
-      // allocation
-      newAlloc->vm_start = lps->contiguousAllocations[0].vm_end;
-      lps->contiguousAllocations[0].vm_next = newAlloc;
-    } else {
-      // If no allocation exists, allocate to start of the mmap region
-      newAlloc->vm_start = lps->mmapRegion;
-    }
-    // The end of the allocation must be rounded up to the nearest page size
-    newAlloc->vm_end =
-        alignToBoundary(newAlloc->vm_start + length, lps->pageSize);
-    lps->contiguousAllocations.push_back(*newAlloc);
-  } else {  // Use hint to provide allocation
-    return 0;
+uint64_t Linux::mmap(uint64_t addr, size_t length, int prot, int flags, int fd,
+                   off_t offset) {
+  std::cout << "[SimEng:Linux:Debug] mmap(addr=" << std::hex << addr << ", len=" << std::hex << length << ", prot=" << prot << ", flags=" << flags << ", fd=" << std::dec << fd << ", offset=" << std::hex << offset << ")" << std::endl;
+  HostFileMMap hfmmap;
+  if (fd > 0) {
+    assert(static_cast<size_t>(fd) <
+               processStates_[0].fileDescriptorTable.size() &&
+           "File descriptor out of range");
+    int64_t hfd = processStates_[0].fileDescriptorTable[fd];
+    assert(hfd >= 0 && "Invalid file descriptor");
+    hfmmap = hostBackedFileMMaps_.mapfd(hfd, length, offset);
   }
-  return newAlloc->vm_start;
+  return processStates_[0].process->getMemRegion().mmapRegion(
+      addr, length, prot, flags, hfmmap);
 }
 
 int64_t Linux::openat(int64_t dfd, const std::string& pathname, int64_t flags,
@@ -467,6 +499,16 @@ int64_t Linux::openat(int64_t dfd, const std::string& pathname, int64_t flags,
   // Alter special file path to point to SimEng one (if pathname points to
   // special file)
   std::string new_pathname = Linux::getSpecialFile(pathname);
+  std::cout << "[SimEng:Linux:Debug] openat(dfd=" << dfd << ", path=\"" << pathname << "\", new_path=\"" << new_pathname << "\")" << std::endl;
+  std::cout << "[SimEng:Linux:Debug] new_path bytes:";
+  for (unsigned char c : new_pathname) std::cout << " " << std::hex << (int)c << std::dec;
+  std::cout << std::endl;
+
+  if (access(new_pathname.c_str(), F_OK) == 0) {
+    std::cout << "[SimEng:Linux:Debug] access(F_OK) says TRUE for " << new_pathname << std::endl;
+  } else {
+    std::cout << "[SimEng:Linux:Debug] access(F_OK) says FALSE for " << new_pathname << " (errno=" << errno << ")" << std::endl;
+  }
 
   // Need to re-create flag input to correct values for host OS
   int64_t newFlags = 0;
@@ -513,11 +555,10 @@ int64_t Linux::openat(int64_t dfd, const std::string& pathname, int64_t flags,
   // Pass call through to host
   int64_t hostFd = ::openat(hDfd, new_pathname.c_str(), newFlags, mode);
   if (hostFd < 0) {
-    // An error occurred, pass this back to userspace don't allocate virtual
-    // file descriptor
-    // TODO possibly need to set errno for simulated program so that it can be
-    // handled correctly?? This may be relevant throughout
-    return hostFd;
+    // An error occurred, pass this back to userspace
+    int err = errno;
+    std::cout << "[SimEng:Linux:Debug] openat failed: " << strerror(err) << " (errno=" << err << ") for " << new_pathname << std::endl;
+    return -err;
   }
 
   LinuxProcessState& processState = processStates_[0];
@@ -535,6 +576,7 @@ int64_t Linux::openat(int64_t dfd, const std::string& pathname, int64_t flags,
     processState.fileDescriptorTable.push_back(hostFd);
   }
 
+  std::cout << "[SimEng:Linux:Debug] openat returned VFD=" << vfd << " (hostFd=" << hostFd << ")" << std::endl;
   return vfd;
 }
 
@@ -563,6 +605,7 @@ int64_t Linux::readlinkat(int64_t dirfd, const std::string& pathname, char* buf,
 }
 
 int64_t Linux::getdents64(int64_t fd, void* buf, uint64_t count) {
+  std::cout << "[SimEng:Linux:Debug] getdents64(fd=" << fd << ")" << std::endl;
   assert(fd > 0 && static_cast<size_t>(fd) <
                        processStates_[0].fileDescriptorTable.size());
   int64_t hfd = processStates_[0].fileDescriptorTable[fd];
@@ -600,7 +643,7 @@ int64_t Linux::getdents64(int64_t fd, void* buf, uint64_t count) {
     // 20 = combined size of d_ino, d_off, d_reclen, d_type, and d_name's
     // null-terminator
     uint16_t structSize = 20 + result.d_namlen;
-    result.d_reclen = alignToBoundary(structSize, 8);
+    result.d_reclen = upAlign(structSize, 8);
     // Copy in all linux_dirent64 members to the buffer at the correct known
     // offsets from base `buf + bytesRead`
     std::memcpy((char*)buf + bytesRead, (void*)&result.d_ino, 8);
@@ -624,9 +667,15 @@ int64_t Linux::read(int64_t fd, void* buf, uint64_t count) {
                        processStates_[0].fileDescriptorTable.size());
   int64_t hfd = processStates_[0].fileDescriptorTable[fd];
   if (hfd < 0) {
-    return EBADF;
+    return -EBADF;
   }
-  return ::read(hfd, buf, count);
+  int64_t retval = ::read(hfd, buf, count);
+  if (retval < 0) {
+    int err = errno;
+    std::cout << "[SimEng:Linux:Debug] read failed: " << strerror(err) << " (errno=" << err << ") for fd=" << fd << std::endl;
+    return -err;
+  }
+  return retval;
 }
 
 int64_t Linux::readv(int64_t fd, const void* iovdata, int iovcnt) {
@@ -677,6 +726,12 @@ int64_t Linux::writev(int64_t fd, const void* iovdata, int iovcnt) {
   int64_t hfd = processStates_[0].fileDescriptorTable[fd];
   if (hfd < 0) {
     return EBADF;
+  }
+  if (hfd == 1 || hfd == 2) {
+    const struct iovec* iov = reinterpret_cast<const struct iovec*>(iovdata);
+    for (int i = 0; i < iovcnt; i++) {
+        std::cout << "[SimEng:Linux:Debug] writev(fd=" << fd << "): " << std::string(static_cast<char*>(iov[i].iov_base), iov[i].iov_len) << std::endl;
+    }
   }
   return ::writev(hfd, reinterpret_cast<const struct iovec*>(iovdata), iovcnt);
 }

@@ -22,6 +22,10 @@ set(SIMENG_SOURCES
     config/SimInfo.cc
     kernel/Linux.cc
     kernel/LinuxProcess.cc
+    kernel/MemRegion.cc
+    kernel/PageFrameAllocator.cc
+    kernel/PageTable.cc
+    kernel/Vma.cc
     memory/FixedLatencyMemoryInterface.cc
     memory/FlatMemoryInterface.cc
     models/emulation/Core.cc

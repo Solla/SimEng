@@ -2,9 +2,9 @@ import sst
 import os
 
 # --- Configuration ---
-# Set paths for SimEng
-SIMENG_CONFIG = "configs/sst-cores/c1_ultra-sst.yaml"  # Path relative to SimEng root
-EXECUTABLE = "SimEngDefaultProgram"         # Path relative to SimEng root
+# Set paths for SimEng (can be overridden by environment variables)
+SIMENG_CONFIG = os.environ.get("SIMENG_CONFIG", "configs/sst-cores/c1_ultra-sst.yaml")
+EXECUTABLE = os.environ.get("SIMENG_EXE_PATH", "SimEngDefaultProgram")
 CLOCK_FREQ = "3.5GHz"
 MEM_SIZE = "2GiB"
 CACHE_LINE_WIDTH = "64"
