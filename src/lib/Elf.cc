@@ -1,7 +1,6 @@
 #include "simeng/Elf.hh"
 
 #include <fcntl.h>
-#include <libelf.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
@@ -154,7 +153,7 @@ std::vector<Elf64_Phdr> Elf::parseElfPhdrs(
 std::shared_ptr<Elf_Binary> Elf::parseElfBinary(std::string fpath) {
   std::ifstream file(fpath, std::ios::binary);
   if (!file.is_open()) {
-    // TODO: Error message
+    std::cerr << "[SimEng:Elf] Could not open " << fpath << std::endl;
     std::exit(1);
   }
   char elfMagic[4] = {0x7f, 'E', 'L', 'F'};
@@ -174,14 +173,15 @@ std::shared_ptr<Elf_Binary> Elf::parseElfBinary(std::string fpath) {
   return std::shared_ptr<Elf_Binary>(new Elf_Binary{ehdr, phdrs});
 }
 
-Elf::Elf(std::string path) {
+Elf::Elf(std::string path, std::string interpreterPath) {
   executable_ = parseElfBinary(path);
+  if (executable_) {
+    isValid_ = true;
+  }
   if (isDynamic_) {
-    // Override path of binary supplied interpreter by one specified by user.
-    // Because host interpreter can be different from interpreter the binary
-    // specifies
-    interpreterPath_ =
-        "/home/rahat/work/ssh-dir/dll/aarch64/ld-linux-aarch64.so.1";
+    if (!interpreterPath.empty()) {
+      interpreterPath_ = interpreterPath;
+    }
     interpreter_ = parseElfBinary(interpreterPath_);
   }
 }
