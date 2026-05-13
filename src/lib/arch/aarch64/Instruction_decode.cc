@@ -346,6 +346,35 @@ void Instruction::decode() {
     }
   }
 
+  // Handle SVE predicated instructions: Search for predicate registers in operands
+  // that might not have been extracted yet. For ZPmZ format instructions, the
+  // predicate register needs to be in source registers for dependency tracking.
+  for (size_t i = 0; i < metadata.operandCount; i++) {
+    const auto& op = metadata.operands[i];
+    if (op.type == AARCH64_OP_REG && op.reg >= AARCH64_REG_P0 &&
+        op.reg <= AARCH64_REG_P15) {
+      Register predReg = csRegToRegister(op.reg);
+      // Check if this predicate hasn't been added yet as a source
+      bool alreadyAdded = false;
+      for (uint16_t j = 0; j < sourceRegisterCount; j++) {
+        if (sourceRegisters[j].type == predReg.type &&
+            sourceRegisters[j].tag == predReg.tag) {
+          alreadyAdded = true;
+          break;
+        }
+      }
+      if (!alreadyAdded) {
+        // Only add if operand has read access (or no explicit access specified)
+        if ((op.access & cs_ac_type::CS_AC_READ) ||
+            op.access == 0) {  // Some operands might have no access info
+          sourceRegisters.push_back(predReg);
+          sourceRegisterCount++;
+          operandsPending++;
+        }
+      }
+    }
+  }
+
   // Identify branches
   for (size_t i = 0; i < metadata.groupCount; i++) {
     if (metadata.groups[i] == ARM64_GRP_JUMP) {
