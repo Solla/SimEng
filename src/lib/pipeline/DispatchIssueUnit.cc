@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <iostream>
 
+#include "simeng/config/SimInfo.hh"
+#include "simeng/config/yaml/ryml.hh"
+
 namespace simeng {
 namespace pipeline {
 
@@ -17,30 +20,34 @@ DispatchIssueUnit::DispatchIssueUnit(
       scoreboard_(physicalRegisterStructure.size()),
       dependencyMatrix_(physicalRegisterStructure.size()),
       portAllocator_(portAllocator) {
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   // Initialise scoreboard
   for (size_t type = 0; type < physicalRegisterStructure.size(); type++) {
     scoreboard_[type].assign(physicalRegisterStructure[type], true);
     dependencyMatrix_[type].resize(physicalRegisterStructure[type]);
   }
-  // Create set of reservation station structs with correct issue port
-  // mappings
-  for (size_t i = 0; i < config["Reservation-Stations"].size(); i++) {
-    // Iterate over each reservation station in config
-    auto reservation_station = config["Reservation-Stations"][i];
-    // Create ReservationStation struct to be stored
+  // Create set of reservation station structs with correct issue port mappings
+  // ModelConfig adds Port-Nums with numeric port indices to each RS entry
+  auto rsNode = config["Reservation-Stations"];
+  for (size_t i = 0; i < rsNode.num_children(); i++) {
+    auto reservation_station = rsNode[i];
     ReservationStation rs = {
         reservation_station["Size"].as<uint16_t>(),
         reservation_station["Dispatch-Rate"].as<uint16_t>(),
         0,
         {}};
-    // Resize rs port attribute to match what's defined in config file
-    rs.ports.resize(reservation_station["Ports"].size());
-    for (size_t j = 0; j < reservation_station["Ports"].size(); j++) {
-      // Iterate over issue ports in config
-      uint16_t issue_port = reservation_station["Ports"][j].as<uint16_t>();
+
+    if (!reservation_station.has_child(ryml::to_csubstr("Port-Nums"))) {
+      std::cerr << "[SimEng:DispatchIssueUnit] Reservation Station " << i
+                << " is missing Port-Nums after config validation\n";
+      exit(1);
+    }
+
+    auto portNums = reservation_station["Port-Nums"];
+    rs.ports.resize(portNums.num_children());
+    for (size_t j = 0; j < portNums.num_children(); j++) {
+      uint16_t issue_port = portNums[j].as<uint16_t>();
       rs.ports[j].issuePort = issue_port;
-      // Add port mapping entry, resizing vector if needed
       if ((issue_port + 1) > portMapping_.size()) {
         portMapping_.resize((issue_port + 1));
       }
@@ -75,6 +82,12 @@ void DispatchIssueUnit::tick() {
     }
     // Allocate issue port to uop
     uint16_t port = portAllocator_.allocate(supportedPorts);
+    if (port >= portMapping_.size()) {
+      std::cerr << "[SimEng:DispatchIssueUnit::tick] Allocated port " << port
+                << " is out of bounds (portMapping size: " << portMapping_.size()
+                << ")\n";
+      exit(1);
+    }
     uint16_t RS_Index = portMapping_[port].first;
     uint16_t RS_Port = portMapping_[port].second;
     assert(RS_Index < reservationStations_.size() &&
@@ -96,7 +109,7 @@ void DispatchIssueUnit::tick() {
 
     // Register read
     // Identify remaining missing registers and supply values
-    auto& sourceRegisters = uop->getOperandRegisters();
+    auto& sourceRegisters = uop->getSourceRegisters();
     for (uint16_t i = 0; i < sourceRegisters.size(); i++) {
       const auto& reg = sourceRegisters[i];
 
@@ -260,7 +273,7 @@ uint64_t DispatchIssueUnit::getPortBusyStalls() const {
   return portBusyStalls_;
 }
 
-void DispatchIssueUnit::getRSSizes(std::vector<uint64_t>& sizes) const {
+void DispatchIssueUnit::getRSSizes(std::vector<uint32_t>& sizes) const {
   for (auto& rs : reservationStations_) {
     sizes.push_back(rs.capacity - rs.currentSize);
   }
