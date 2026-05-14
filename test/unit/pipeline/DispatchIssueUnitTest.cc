@@ -461,7 +461,7 @@ TEST_F(PipelineDispatchIssueUnitTest, createdependency_raw) {
 // Ensure correct instructions are flushed from reservation stations and the
 // dependency matrix
 // TODO: Fix mock span lifetime issue with gmock Return()
-TEST_F(PipelineDispatchIssueUnitTest, DISABLED_purgeFlushed) {
+TEST_F(PipelineDispatchIssueUnitTest, purgeFlushed) {
   // All expected calls to instruction 1 during tick()
   EXPECT_CALL(*uop, getSupportedPorts()).WillOnce(ReturnRef(suppPorts));
   uop->setExceptionEncountered(false);

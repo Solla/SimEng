@@ -6,6 +6,7 @@
 #include <queue>
 
 #include "InstructionMetadata.hh"
+#include "simeng/arch/riscv/ArchInfo.hh"
 #include "simeng/config/SimInfo.hh"
 #include "simeng/config/yaml/ryml.hh"
 
@@ -120,9 +121,16 @@ Architecture::Architecture() {
     }
   }
 
-  // Initialise systemRegisterMap_ such that relevant values in Capstone's
-  // riscv_sysreg enum are mapped to system register tags.
+  // Initialise systemRegisterMap_ such that relevant values in the riscv_sysreg
+  // enum are mapped to zero-indexed system register tags. The ordering must
+  // match ArchInfo's sysRegisterEnums_ so that physical/architectural register
+  // file slots line up.
   systemRegisterMap_[RISCV_SYSREG_FFLAGS] = 0;
+  systemRegisterMap_[RISCV_SYSREG_FRM] = 1;
+  systemRegisterMap_[RISCV_SYSREG_FCSR] = 2;
+  systemRegisterMap_[RISCV_SYSREG_CYCLE] = 3;
+  systemRegisterMap_[RISCV_SYSREG_TIME] = 4;
+  systemRegisterMap_[RISCV_SYSREG_INSTRET] = 5;
 }
 Architecture::~Architecture() {
   cs_close(&capstoneHandle);
@@ -255,6 +263,13 @@ uint16_t Architecture::getNumSystemRegisters() const {
 // Left blank as no implementation necessary
 void Architecture::updateSystemTimerRegisters(RegisterFileSet* regFile,
                                               const uint64_t iterations) const {
+  // Write the elapsed-cycle count to the architectural CYCLE CSR. RISC-V
+  // exposes mcycle/cycle as a free-running counter of completed cycles, which
+  // maps naturally onto SimEng's per-iteration tick count.
+  const Register cycleReg = {
+      RegisterType::SYSTEM,
+      static_cast<uint16_t>(getSystemRegisterTag(RISCV_SYSREG_CYCLE))};
+  regFile->set(cycleReg, RegisterValue(iterations, 8));
 }
 
 // Left blank as no implementation necessary
