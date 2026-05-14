@@ -17,8 +17,8 @@ ReorderBuffer::ReorderBuffer(
       lsq_(lsq),
       maxSize_(maxSize),
       raiseException_(raiseException),
-      sendLoopBoundary_(sendLoopBoundary),
       predictor_(predictor),
+      sendLoopBoundary_(sendLoopBoundary),
       loopBufSize_(loopBufSize),
       loopDetectionThreshold_(loopDetectionThreshold) {}
 
@@ -70,7 +70,7 @@ void ReorderBuffer::commitMicroOps(uint64_t insnId) {
   return;
 }
 
-unsigned int ReorderBuffer::commit(unsigned int maxCommitSize) {
+unsigned int ReorderBuffer::commit(uint64_t maxCommitSize) {
   shouldFlush_ = false;
   size_t maxCommits =
       std::min(static_cast<size_t>(maxCommitSize), buffer_.size());
@@ -111,6 +111,18 @@ unsigned int ReorderBuffer::commit(unsigned int maxCommitSize) {
 
         buffer_.pop_front();
         return n + 1;
+      }
+    }
+
+    // Update branch predictor with committed branch outcome
+    if (uop->isBranch()) {
+      predictor_.update(uop->getInstructionAddress(), uop->wasBranchTaken(),
+                        uop->getBranchAddress(), uop->getBranchType(),
+                        uop->getInstructionId());
+      const auto& pred = uop->getBranchPrediction();
+      if (pred.isTaken != uop->wasBranchTaken() ||
+          pred.target != uop->getBranchAddress()) {
+        branchMispredicts_++;
       }
     }
 
@@ -203,7 +215,7 @@ unsigned int ReorderBuffer::getFreeSpace() const {
 
 bool ReorderBuffer::shouldFlush() const { return shouldFlush_; }
 uint64_t ReorderBuffer::getFlushAddress() const { return pc_; }
-uint64_t ReorderBuffer::getFlushSeqId() const { return flushAfter_; }
+uint64_t ReorderBuffer::getFlushInsnId() const { return flushAfter_; }
 
 uint64_t ReorderBuffer::getInstructionsCommittedCount() const {
   return instructionsCommitted_;
@@ -211,6 +223,10 @@ uint64_t ReorderBuffer::getInstructionsCommittedCount() const {
 
 uint64_t ReorderBuffer::getViolatingLoadsCount() const {
   return loadViolations_;
+}
+
+uint64_t ReorderBuffer::getBranchMispredictedCount() const {
+  return branchMispredicts_;
 }
 
 }  // namespace pipeline

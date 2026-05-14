@@ -1,4 +1,4 @@
-#include "simeng/arch/riscv/Architecture.hh"
+﻿#include "simeng/arch/riscv/Architecture.hh"
 
 #include <algorithm>
 #include <cassert>
@@ -6,6 +6,8 @@
 #include <queue>
 
 #include "InstructionMetadata.hh"
+#include "simeng/config/SimInfo.hh"
+#include "simeng/config/yaml/ryml.hh"
 
 namespace simeng {
 namespace arch {
@@ -15,7 +17,7 @@ std::unordered_map<uint32_t, Instruction> Architecture::decodeCache;
 std::forward_list<InstructionMetadata> Architecture::metadataCache;
 
 Architecture::Architecture() {
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   cs_err n = cs_open(CS_ARCH_RISCV, CS_MODE_RISCV64, &capstoneHandle);
   if (n != CS_ERR_OK) {
     std::cerr << "[SimEng:Architecture] Could not create capstone handle due "
@@ -33,12 +35,12 @@ Architecture::Architecture() {
   }
   // Extract execution latency/throughput for each group
   std::vector<uint8_t> inheritanceDistance(NUM_GROUPS, UINT8_MAX);
-  for (size_t i = 0; i < config["Latencies"].size(); i++) {
-    YAML::Node port_node = config["Latencies"][i];
+  for (size_t i = 0; i < config["Latencies"].num_children(); i++) {
+    ryml::ConstNodeRef port_node = config["Latencies"][i];
     uint16_t latency = port_node["Execution-Latency"].as<uint16_t>();
     uint16_t throughput = port_node["Execution-Throughput"].as<uint16_t>();
-    for (size_t j = 0; j < port_node["Instruction-Group"].size(); j++) {
-      uint16_t group = port_node["Instruction-Group"][j].as<uint16_t>();
+    for (size_t j = 0; j < port_node["Instruction-Group-Nums"].num_children(); j++) {
+      uint16_t group = port_node["Instruction-Group-Nums"][j].as<uint16_t>();
       groupExecutionInfo_[group].latency = latency;
       groupExecutionInfo_[group].stallCycles = throughput;
       // Set zero inheritance distance for latency assignment as it's explicitly
@@ -51,9 +53,9 @@ Architecture::Architecture() {
       uint8_t distance = 1;
       while (groups.size()) {
         // Determine if there's any inheritance
-        if (groupInheritance.find(groups.front()) != groupInheritance.end()) {
+        if (groupInheritance_.find(groups.front()) != groupInheritance_.end()) {
           std::vector<uint16_t> inheritedGroups =
-              groupInheritance.at(groups.front());
+              groupInheritance_.at(groups.front());
           for (int k = 0; k < inheritedGroups.size(); k++) {
             // Determine if this group has inherited latency values from a
             // smaller distance
@@ -70,8 +72,8 @@ Architecture::Architecture() {
       }
     }
     // Store any opcode-based latency override
-    for (size_t j = 0; j < port_node["Instruction-Opcode"].size(); j++) {
-      uint16_t opcode = port_node["Instruction-Opcode"][j].as<uint16_t>();
+    for (size_t j = 0; j < port_node["Instruction-Opcodes"].num_children(); j++) {
+      uint16_t opcode = port_node["Instruction-Opcodes"][j].as<uint16_t>();
       opcodeExecutionInfo_[opcode].latency = latency;
       opcodeExecutionInfo_[opcode].stallCycles = throughput;
     }
@@ -82,10 +84,10 @@ Architecture::Architecture() {
   if (config["Core"]["Simulation-Mode"].as<std::string>() == "outoforder") {
     // Create mapping between instructions groups and the ports that support
     // them
-    for (size_t i = 0; i < config["Ports"].size(); i++) {
+    for (size_t i = 0; i < config["Ports"].num_children(); i++) {
       // Store which ports support which groups
-      YAML::Node group_node = config["Ports"][i]["Instruction-Group-Support"];
-      for (size_t j = 0; j < group_node.size(); j++) {
+      ryml::ConstNodeRef group_node = config["Ports"][i]["Instruction-Group-Support-Nums"];
+      for (size_t j = 0; j < group_node.num_children(); j++) {
         uint16_t group = group_node[j].as<uint16_t>();
         uint8_t newPort = static_cast<uint8_t>(i);
         groupExecutionInfo_[group].ports.push_back(newPort);
@@ -94,9 +96,9 @@ Architecture::Architecture() {
         groups.push(group);
         while (groups.size()) {
           // Determine if there's any inheritance
-          if (groupInheritance.find(groups.front()) != groupInheritance.end()) {
+          if (groupInheritance_.find(groups.front()) != groupInheritance_.end()) {
             std::vector<uint16_t> inheritedGroups =
-                groupInheritance.at(groups.front());
+                groupInheritance_.at(groups.front());
             for (int k = 0; k < inheritedGroups.size(); k++) {
               groupExecutionInfo_[inheritedGroups[k]].ports.push_back(newPort);
               groups.push(inheritedGroups[k]);
@@ -106,17 +108,21 @@ Architecture::Architecture() {
         }
       }
       // Store any opcode-based port support override
-      YAML::Node opcode_node = config["Ports"][i]["Instruction-Opcode-Support"];
-      for (size_t j = 0; j < opcode_node.size(); j++) {
+      ryml::ConstNodeRef opcode_node = config["Ports"][i]["Instruction-Opcode-Support"];
+      for (size_t j = 0; j < opcode_node.num_children(); j++) {
         // If latency information hasn't been defined, set to zero as to inform
         // later access to use group defined latencies instead
         uint16_t opcode = opcode_node[j].as<uint16_t>();
         opcodeExecutionInfo_.try_emplace(
-            opcode, simeng::arch::riscv::executionInfo{0, 0, {}});
+            opcode, simeng::ExecutionInfo{0, 0, {}});
         opcodeExecutionInfo_[opcode].ports.push_back(static_cast<uint8_t>(i));
       }
     }
   }
+
+  // Initialise systemRegisterMap_ such that relevant values in Capstone's
+  // riscv_sysreg enum are mapped to system register tags.
+  systemRegisterMap_[RISCV_SYSREG_FFLAGS] = 0;
 }
 Architecture::~Architecture() {
   cs_close(&capstoneHandle);
@@ -135,7 +141,8 @@ uint8_t Architecture::predecode(const void* ptr, uint8_t bytesAvailable,
     metadataCache.emplace_front(metadata);
     output.resize(1);
     auto& uop = output[0];
-    uop = std::make_shared<Instruction>(*this, metadataCache.front(),
+    uop = std::make_shared<Instruction>(*this,
+                                        std::make_shared<const InstructionMetadata>(metadataCache.front()),
                                         InstructionException::MisalignedPC);
     uop->setInstructionAddress(instructionAddress);
     // Return non-zero value to avoid fatal error
@@ -172,7 +179,7 @@ uint8_t Architecture::predecode(const void* ptr, uint8_t bytesAvailable,
     metadataCache.push_front(metadata);
 
     // Create an instruction using the metadata
-    Instruction newInsn(*this, metadataCache.front());
+    Instruction newInsn(*this, std::make_shared<const InstructionMetadata>(metadataCache.front()));
     // Set execution information for this instruction
     newInsn.setExecutionInfo(getExecutionInfo(newInsn));
     // Cache the instruction
@@ -190,13 +197,13 @@ uint8_t Architecture::predecode(const void* ptr, uint8_t bytesAvailable,
   return 4;
 }
 
-executionInfo Architecture::getExecutionInfo(Instruction& insn) const {
+ExecutionInfo Architecture::getExecutionInfo(Instruction& insn) const {
   // Assume no opcode-based override
-  executionInfo exeInfo = groupExecutionInfo_.at(insn.getGroup());
+  ExecutionInfo exeInfo = groupExecutionInfo_.at(insn.getGroup());
   if (opcodeExecutionInfo_.find(insn.getMetadata().opcode) !=
       opcodeExecutionInfo_.end()) {
     // Replace with overrided values
-    executionInfo overrideInfo =
+    ExecutionInfo overrideInfo =
         opcodeExecutionInfo_.at(insn.getMetadata().opcode);
     if (overrideInfo.latency != 0) exeInfo.latency = overrideInfo.latency;
     if (overrideInfo.stallCycles != 0)
@@ -220,7 +227,7 @@ int32_t Architecture::getSystemRegisterTag(uint16_t reg) const {
   // Check below is done for speculative instructions that may be passed into
   // the function but will not be executed. If such invalid speculative
   // instructions get through they can cause an out-of-range error.
-  if (!systemRegisterMap_.count(reg)) return 0;
+  if (!systemRegisterMap_.count(reg)) return -1;
   return systemRegisterMap_.at(reg);
 }
 
@@ -228,7 +235,7 @@ uint8_t Architecture::getMaxInstructionSize() const { return 4; }
 
 std::vector<RegisterFileStructure>
 Architecture::getConfigPhysicalRegisterStructure() const {
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   return {{8, config["Register-Set"]["GeneralPurpose-Count"].as<uint16_t>()},
           {8, config["Register-Set"]["FloatingPoint-Count"].as<uint16_t>()},
           {8, getNumSystemRegisters()}};
@@ -236,7 +243,7 @@ Architecture::getConfigPhysicalRegisterStructure() const {
 
 std::vector<uint16_t> Architecture::getConfigPhysicalRegisterQuantities()
     const {
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   return {config["Register-Set"]["GeneralPurpose-Count"].as<uint16_t>(),
           config["Register-Set"]["FloatingPoint-Count"].as<uint16_t>(),
           getNumSystemRegisters()};

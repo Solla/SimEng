@@ -80,6 +80,26 @@ void DispatchIssueUnit::tick() {
       input_.getHeadSlots()[slot] = nullptr;
       continue;
     }
+    // Pre-check: if every reservation station reachable via supportedPorts is
+    // already full (or hits its per-tick dispatch limit), stall without
+    // consulting the port allocator. This avoids spurious allocate/deallocate
+    // round-trips when there is no available RS slot anyway.
+    bool anyRsAvailable = false;
+    for (uint16_t p : supportedPorts) {
+      if (p >= portMapping_.size()) continue;
+      uint16_t rsIdx = portMapping_[p].first;
+      const ReservationStation& rs = reservationStations_[rsIdx];
+      if (rs.currentSize < rs.capacity &&
+          dispatches_[rsIdx] < rs.dispatchRate) {
+        anyRsAvailable = true;
+        break;
+      }
+    }
+    if (!anyRsAvailable) {
+      input_.stall(true);
+      rsStalls_++;
+      return;
+    }
     // Allocate issue port to uop
     uint16_t port = portAllocator_.allocate(supportedPorts);
     if (port >= portMapping_.size()) {
