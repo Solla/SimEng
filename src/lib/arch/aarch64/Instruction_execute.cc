@@ -1,4 +1,4 @@
-// Temporary; until execute has been verified to work correctly.
+﻿// Temporary; until execute has been verified to work correctly.
 #ifndef NDEBUG
 #include <iostream>
 #endif
@@ -6,7 +6,6 @@
 #include <cmath>
 
 #include "simeng/arch/aarch64/helpers/arithmetic.hh"
-#include "simeng/arch/aarch64/helpers/auxiliaryFunctions.hh"
 #include "simeng/arch/aarch64/helpers/bitmanip.hh"
 #include "simeng/arch/aarch64/helpers/comparison.hh"
 #include "simeng/arch/aarch64/helpers/conditional.hh"
@@ -18,6 +17,18 @@
 #include "simeng/arch/aarch64/helpers/neon.hh"
 #include "simeng/arch/aarch64/helpers/store.hh"
 #include "simeng/arch/aarch64/helpers/sve.hh"
+
+// Namespace aliases so execute code can call helpers with their short names
+namespace AuxFunc = simeng::arch::aarch64;
+namespace arithmeticHelp = simeng::arch::aarch64;
+namespace bitmanipHelp = simeng::arch::aarch64;
+namespace comparisonHelp = simeng::arch::aarch64;
+namespace conditionalHelp = simeng::arch::aarch64;
+namespace divideHelp = simeng::arch::aarch64;
+namespace floatHelp = simeng::arch::aarch64;
+namespace logicalHelp = simeng::arch::aarch64;
+namespace multiplyHelp = simeng::arch::aarch64;
+namespace sveHelp = simeng::arch::aarch64;
 
 namespace simeng {
 namespace arch {
@@ -2088,12 +2099,12 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_FRINTN_ZPmZ_D: {  // frintn zd.d, pg/m, zn.d
         results[0] =
-            sveHelp::sveFrintnPredicated<int64_t, double>(operands, VL_bits);
+            sveHelp::sveFrintnPredicated<double>(operands, VL_bits);
         break;
       }
       case Opcode::AArch64_FRINTN_ZPmZ_S: {  // frintn zd.s, pg/m, zn.s
         results[0] =
-            sveHelp::sveFrintnPredicated<int32_t, float>(operands, VL_bits);
+            sveHelp::sveFrintnPredicated<float>(operands, VL_bits);
         break;
       }
       case Opcode::AArch64_FRINTPDr: {  // frintp dd, dn
@@ -2483,7 +2494,7 @@ void Instruction::execute() {
             operands[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata.operands[0].sme.slice_offset.imm) % partition_num;
         uint16_t index = 0;
         uint32_t out[64] = {0};
         for (int i = 0; i < partition_num; i++) {
@@ -2520,7 +2531,7 @@ void Instruction::execute() {
             operands[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata.operands[0].sme.slice_offset.imm) % partition_num;
         uint16_t index = 0;
         for (int i = 0; i < partition_num; i++) {
           uint32_t* row =
@@ -2574,7 +2585,7 @@ void Instruction::execute() {
         results[0] = {out, 256};
         break;
       }
-      case Opcode::AArch64_LD1D_IMM_REAL: {  // ld1d  {zt.d}, pg/z, [xn{, #imm,
+      case Opcode::AArch64_LD1D_IMM: {  // ld1d  {zt.d}, pg/z, [xn{, #imm,
                                              // mul vl}]
         // LOAD
         const uint64_t* p = operands[0].getAsVector<uint64_t>();
@@ -2883,7 +2894,7 @@ void Instruction::execute() {
         results[0] = {out, 256};
         break;
       }
-      case Opcode::AArch64_LD1W_IMM_REAL: {  // ld1w  {zt.s}, pg/z, [xn{, #imm,
+      case Opcode::AArch64_LD1W_IMM: {  // ld1w  {zt.s}, pg/z, [xn{, #imm,
                                              // mul vl}]
         // LOAD
         const uint64_t* p = operands[0].getAsVector<uint64_t>();
@@ -3636,7 +3647,7 @@ void Instruction::execute() {
       case Opcode::AArch64_MSR: {  // msr (systemreg|Sop0_op1_Cn_Cm_op2), xt
         // TODO: Suppport reg writes to SVCR
         // Catch updates to SVCR - Not currently supported
-        if ((uint32_t)metadata.operands[0].sys == (uint32_t)ARM64_SYSREG_SVCR) {
+        if (metadata.operands[0].sysop.reg.raw_val == AARCH64_SYSREG_SVCR) {
           std::cerr << "[SimEng::Instruction_Execute] Register writes to SVCR "
                        "are not currently supported. Please use one of the "
                        "following :\n";
@@ -3658,16 +3669,16 @@ void Instruction::execute() {
       case Opcode::AArch64_MSRpstatesvcrImm1: {  // msr svcr<sm|za|smza>, #imm
         // This instruction is always used by SMSTART and SMSTOP aliases.
         const uint64_t svcrBits =
-            static_cast<uint64_t>(metadata.operands[0].svcr);
+            static_cast<uint64_t>(metadata.operands[0].sysop.alias.svcr);
 
         // Changing value of SM or ZA bits in SVCR zeros out vector, predicate,
         // and ZA registers. Raise an exception to do this.
         switch (svcrBits) {
-          case ARM64_SVCR_SVCRSM:
+          case AARCH64_SVCR_SVCRSM:
             return streamingModeUpdated();
-          case ARM64_SVCR_SVCRZA:
+          case AARCH64_SVCR_SVCRZA:
             return zaRegisterStatusUpdated();
-          case ARM64_SVCR_SVCRSMZA:
+          case AARCH64_SVCR_SVCRSMZA:
             return SMZAupdated();
           default:
             // Invalid instruction
@@ -3799,19 +3810,19 @@ void Instruction::execute() {
         break;
       }
       case Opcode::AArch64_PSEL_PPPRI_B: {  // psel pd, pn, pm.b[wa, #imm]
-        results[0] = sveHelp::svePsel<uint8_t>(operands, metadata);
+        results[0] = sveHelp::svePsel<uint8_t>(operands, metadata, VL_bits);
         break;
       }
       case Opcode::AArch64_PSEL_PPPRI_D: {  // psel pd, pn, pm.d[wa, #imm]
-        results[0] = sveHelp::svePsel<uint64_t>(operands, metadata);
+        results[0] = sveHelp::svePsel<uint64_t>(operands, metadata, VL_bits);
         break;
       }
       case Opcode::AArch64_PSEL_PPPRI_H: {  // psel pd, pn, pm.h[wa, #imm]
-        results[0] = sveHelp::svePsel<uint16_t>(operands, metadata);
+        results[0] = sveHelp::svePsel<uint16_t>(operands, metadata, VL_bits);
         break;
       }
       case Opcode::AArch64_PSEL_PPPRI_S: {  // psel pd, pn, pm.s[wa, #imm]
-        results[0] = sveHelp::svePsel<uint32_t>(operands, metadata);
+        results[0] = sveHelp::svePsel<uint32_t>(operands, metadata, VL_bits);
         break;
       }
       case Opcode::AArch64_PTEST_PP: {  // ptest pg, pn.b
@@ -4155,7 +4166,7 @@ void Instruction::execute() {
         results[0] = neonHelp::vecSshrShift_imm<int32_t, 4>(operands, metadata);
         break;
       }
-      case Opcode::AArch64_SST1B_D_REAL: {  // st1b {zd.d}, pg, [xn, zm.d]
+      case Opcode::AArch64_SST1B_D: {  // st1b {zd.d}, pg, [xn, zm.d]
         // STORE
         const uint64_t* d = operands[0].getAsVector<uint64_t>();
         const uint64_t* p = operands[1].getAsVector<uint64_t>();
@@ -4171,7 +4182,7 @@ void Instruction::execute() {
         }
         break;
       }
-      case Opcode::AArch64_SST1D_REAL: {  // st1d {zt.d}, pg, [xn, zm.d]
+      case Opcode::AArch64_SST1D: {  // st1d {zt.d}, pg, [xn, zm.d]
         // STORE
         const uint64_t* d = operands[0].getAsVector<uint64_t>();
         const uint64_t* p = operands[1].getAsVector<uint64_t>();
@@ -4203,7 +4214,7 @@ void Instruction::execute() {
         }
         break;
       }
-      case Opcode::AArch64_SST1D_SCALED_SCALED_REAL: {  // st1d {zt.d}, pg, [xn,
+      case Opcode::AArch64_SST1D_SCALED: {  // st1d {zt.d}, pg, [xn,
                                                         // zm.d, lsl #
                                                         // 3]
         // STORE
@@ -4234,7 +4245,7 @@ void Instruction::execute() {
             operands[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata.operands[0].sme.slice_offset.imm) % partition_num;
 
         const uint32_t* tileSlice = operands[sliceNum].getAsVector<uint32_t>();
         uint16_t index = 0;
@@ -4260,7 +4271,7 @@ void Instruction::execute() {
             operands[partition_num + 1].getAsVector<uint64_t>();
 
         const uint32_t sliceNum =
-            (ws + metadata.operands[0].sme_index.disp) % partition_num;
+            (ws + metadata.operands[0].sme.slice_offset.imm) % partition_num;
         uint16_t index = 0;
         for (int i = 0; i < partition_num; i++) {
           uint64_t shifted_active = 1ull << ((i % 16) * 4);
@@ -5341,84 +5352,84 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_WHILELO_PWW_B: {  // whilelo pd.b, wn, wm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint32_t, uint8_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint32_t, uint8_t>(operands, VL_bits, [](uint32_t a, uint32_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PWW_D: {  // whilelo pd.d, wn, wm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint32_t, uint64_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint32_t, uint64_t>(operands, VL_bits, [](uint32_t a, uint32_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PWW_H: {  // whilelo pd.h, wn, wm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint32_t, uint16_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint32_t, uint16_t>(operands, VL_bits, [](uint32_t a, uint32_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PWW_S: {  // whilelo pd.s, wn, wm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint32_t, uint32_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint32_t, uint32_t>(operands, VL_bits, [](uint32_t a, uint32_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PXX_B: {  // whilelo pd.b, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint64_t, uint8_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint64_t, uint8_t>(operands, VL_bits, [](uint64_t a, uint64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PXX_D: {  // whilelo pd.d, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint64_t, uint64_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint64_t, uint64_t>(operands, VL_bits, [](uint64_t a, uint64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PXX_H: {  // whilelo pd.h, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint64_t, uint16_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint64_t, uint16_t>(operands, VL_bits, [](uint64_t a, uint64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELO_PXX_S: {  // whilelo pd.s, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<uint64_t, uint32_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<uint64_t, uint32_t>(operands, VL_bits, [](uint64_t a, uint64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELT_PXX_B: {  // whilelt pd.b, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<int64_t, int8_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<int64_t, int8_t>(operands, VL_bits, [](int64_t a, int64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELT_PXX_D: {  // whilelt pd.d, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<int64_t, int64_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<int64_t, int64_t>(operands, VL_bits, [](int64_t a, int64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELT_PXX_H: {  // whilelt pd.h, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<int64_t, int16_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<int64_t, int16_t>(operands, VL_bits, [](int64_t a, int64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
       }
       case Opcode::AArch64_WHILELT_PXX_S: {  // whilelt pd.s, xn, xm
         auto [output, nzcv] =
-            sveHelp::sveWhilelo<int64_t, int32_t>(operands, VL_bits, true);
+            sveHelp::sveWhile<int64_t, int32_t>(operands, VL_bits, [](int64_t a, int64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
         break;
@@ -5521,3 +5532,4 @@ void Instruction::execute() {
 }  // namespace aarch64
 }  // namespace arch
 }  // namespace simeng
+

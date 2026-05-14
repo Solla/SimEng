@@ -7,6 +7,7 @@
 #include "simeng/Core.hh"
 #include "simeng/Instruction.hh"
 #include "simeng/MemoryInterface.hh"
+#include "simeng/RegisterFileSet.hh"
 
 namespace simeng {
 

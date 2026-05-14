@@ -534,7 +534,7 @@ void SyscallHandler::handleSyscall() {
                     << std::endl;
           idleOnComplete = true;
         } else {
-          if (proc->getTGID() == tgid) {
+          if (proc->getTGID() == (uint64_t)tgid) {
             idleOnComplete = (proc->status_ == procStatus::executing);
             OS_->terminateThread(tid);
             std::cout
@@ -810,16 +810,16 @@ void SyscallHandler::handleSyscall() {
       uint64_t bufPtr = currentInfo_.registerArguments[0].get<uint64_t>();
       size_t buflen = currentInfo_.registerArguments[1].get<size_t>();
 
-      char buf[buflen];
+      std::vector<char> bufvec(buflen);
       for (size_t i = 0; i < buflen; i++) {
-        buf[i] = (uint8_t)rand();
+        bufvec[i] = (uint8_t)rand();
       }
 
       stateChange = {
           ChangeType::REPLACEMENT, {currentInfo_.ret}, {(uint64_t)buflen}};
 
       stateChange.memoryAddresses.push_back({bufPtr, (uint8_t)buflen});
-      stateChange.memoryAddressValues.push_back(RegisterValue(buf, buflen));
+      stateChange.memoryAddressValues.push_back(RegisterValue(bufvec.data(), buflen));
 
       break;
     }
@@ -859,7 +859,7 @@ void SyscallHandler::readStringThen(
     // Get a string from the simulation memory and within the passed buffer
     std::vector<char> data = memory_->getUntimedData(translatedAddr, maxLength);
 
-    for (int i = 0; i < data.size(); i++) {
+    for (size_t i = 0; i < data.size(); i++) {
       buffer[i] = data[i];
       // End of string; call onwards
       if (buffer[i] == '\0') return then(i + 1);
@@ -958,7 +958,7 @@ void SyscallHandler::readLinkAt(std::string path, size_t length) {
 uint64_t SyscallHandler::getDirFd(int64_t dfd, std::string pathname) {
   // Resolve absolute path to target file
   char absolutePath[PATH_MAX_LEN];
-  realpath(pathname.c_str(), absolutePath);
+  char* _unused __attribute__((unused)) = realpath(pathname.c_str(), absolutePath);
 
   int64_t dfd_temp = AT_FDCWD;
   if (dfd != -100) {
@@ -980,7 +980,7 @@ uint64_t SyscallHandler::getDirFd(int64_t dfd, std::string pathname) {
 std::string SyscallHandler::getSpecialFile(const std::string filename) {
   for (auto prefix : {"/dev/", "/proc/", "/sys/"}) {
     if (strncmp(filename.c_str(), prefix, strlen(prefix)) == 0) {
-      for (int i = 0; i < supportedSpecialFiles_.size(); i++) {
+      for (size_t i = 0; i < supportedSpecialFiles_.size(); i++) {
         if (filename.find(supportedSpecialFiles_[i]) != std::string::npos) {
           std::cout << "[SimEng:SyscallHandler] Using Special File: "
                     << filename.c_str() << std::endl;
@@ -1480,7 +1480,7 @@ int64_t SyscallHandler::readv(int64_t fd, const void* iovdata, int iovcnt) {
 int64_t SyscallHandler::schedGetAffinity(
     pid_t pid, size_t cpusetsize, uint64_t mask) {
   if (mask != 0 &&
-      (pid == 0 || pid == OS_->getProcess(currentInfo_.threadId)->getTGID())) {
+      (pid == 0 || (uint64_t)pid == OS_->getProcess(currentInfo_.threadId)->getTGID())) {
     // Always return a bit mask of 1 to represent 1 available CPU
     return 1;
   }

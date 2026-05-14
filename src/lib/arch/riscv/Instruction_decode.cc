@@ -64,14 +64,14 @@ Register csRegToRegister(unsigned int reg) {
  * DECODING LOGIC
  *****************/
 void Instruction::decode() {
-  if (metadata_.id == RISCV_INS_INVALID) {
+  if (metadata_->id == RISCV_INS_INVALID) {
     exception_ = InstructionException::EncodingUnallocated;
     exceptionEncountered_ = true;
     return;
   }
 
   // Identify branches
-  switch (metadata_.opcode) {
+  switch (metadata_->opcode) {
     case Opcode::RISCV_BEQ:
     case Opcode::RISCV_BNE:
     case Opcode::RISCV_BLT:
@@ -124,8 +124,8 @@ void Instruction::decode() {
       break;
   }
 
-  if (Opcode::RISCV_AMOADD_D <= metadata_.opcode &&
-      metadata_.opcode <= Opcode::RISCV_AMOXOR_W_RL) {
+  if (Opcode::RISCV_AMOADD_D <= metadata_->opcode &&
+      metadata_->opcode <= Opcode::RISCV_AMOXOR_W_RL) {
     // Atomics: both load and store
     setInstructionType(InsnType::isLoad);
     setInstructionType(InsnType::isStore);
@@ -133,8 +133,8 @@ void Instruction::decode() {
   }
 
   // Extract explicit register accesses and immediates
-  for (size_t i = 0; i < metadata_.operandCount; i++) {
-    const auto& op = metadata_.operands[i];
+  for (size_t i = 0; i < metadata_->operandCount; i++) {
+    const auto& op = metadata_->operands[i];
 
     // First operand is always of REG type but could be either source or
     // destination
@@ -143,8 +143,8 @@ void Instruction::decode() {
       // is a source register, for all other instructions the first operand is a
       // destination register
       if ((isInstruction(InsnType::isBranch) &&
-           metadata_.opcode != Opcode::RISCV_JAL &&
-           metadata_.opcode != Opcode::RISCV_JALR) ||
+           metadata_->opcode != Opcode::RISCV_JAL &&
+           metadata_->opcode != Opcode::RISCV_JALR) ||
           (isInstruction(InsnType::isStore) &&
            !isInstruction(InsnType::isAtomic))) {
         sourceRegisters_[sourceRegisterCount_] = csRegToRegister(op.reg);
@@ -223,78 +223,78 @@ void Instruction::decode() {
     }
   }
 
-  if ((Opcode::RISCV_SLL <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_SLLW) ||
-      (Opcode::RISCV_SRA <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_SRAW) ||
-      (Opcode::RISCV_SRL <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_SRLW)) {
+  if ((Opcode::RISCV_SLL <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_SLLW) ||
+      (Opcode::RISCV_SRA <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_SRAW) ||
+      (Opcode::RISCV_SRL <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_SRLW)) {
     // Shift instructions
     setInstructionType(InsnType::isShift);
   }
 
-  if ((Opcode::RISCV_XOR <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_XORI) ||
-      (Opcode::RISCV_OR <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_ORI) ||
-      (Opcode::RISCV_AND <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_ANDI) ||
-      (Opcode::RISCV_FSGNJN_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FSGNJ_S)) {
+  if ((Opcode::RISCV_XOR <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_XORI) ||
+      (Opcode::RISCV_OR <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_ORI) ||
+      (Opcode::RISCV_AND <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_ANDI) ||
+      (Opcode::RISCV_FSGNJN_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FSGNJ_S)) {
     // Logical instructions
     setInstructionType(InsnType::isLogical);
   }
 
-  if ((Opcode::RISCV_SLT <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_SLTU) ||
-      (Opcode::RISCV_FEQ_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FEQ_S) ||
-      (Opcode::RISCV_FLE_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FLT_S) ||
-      (Opcode::RISCV_FMAX_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FMIN_S)) {
+  if ((Opcode::RISCV_SLT <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_SLTU) ||
+      (Opcode::RISCV_FEQ_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FEQ_S) ||
+      (Opcode::RISCV_FLE_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FLT_S) ||
+      (Opcode::RISCV_FMAX_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FMIN_S)) {
     // Compare instructions
     setInstructionType(InsnType::isCompare);
   }
 
-  if ((Opcode::RISCV_MUL <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_MULW) ||
-      (Opcode::RISCV_FMADD_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FMADD_S) ||
-      (Opcode::RISCV_FMSUB_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FMUL_S) ||
-      (Opcode::RISCV_FNMADD_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FNMSUB_S)) {
+  if ((Opcode::RISCV_MUL <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_MULW) ||
+      (Opcode::RISCV_FMADD_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FMADD_S) ||
+      (Opcode::RISCV_FMSUB_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FMUL_S) ||
+      (Opcode::RISCV_FNMADD_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FNMSUB_S)) {
     // Multiply instructions
     setInstructionType(InsnType::isMultiply);
   }
 
-  if ((Opcode::RISCV_REM <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_REMW) ||
-      (Opcode::RISCV_DIV <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_DIVW) ||
-      (Opcode::RISCV_FDIV_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FDIV_S) ||
-      (Opcode::RISCV_FSQRT_D <= metadata_.opcode &&
-       metadata_.opcode <= Opcode::RISCV_FSQRT_S)) {
+  if ((Opcode::RISCV_REM <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_REMW) ||
+      (Opcode::RISCV_DIV <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_DIVW) ||
+      (Opcode::RISCV_FDIV_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FDIV_S) ||
+      (Opcode::RISCV_FSQRT_D <= metadata_->opcode &&
+       metadata_->opcode <= Opcode::RISCV_FSQRT_S)) {
     // Divide instructions
     setInstructionType(InsnType::isDivide);
   }
 
-  if ((metadata_.opcode >= Opcode::RISCV_FADD_D &&
-       metadata_.opcode <= Opcode::RISCV_FDIV_S) ||
-      (metadata_.opcode >= Opcode::RISCV_FEQ_D &&
-       metadata_.opcode <= Opcode::RISCV_FSW)) {
+  if ((metadata_->opcode >= Opcode::RISCV_FADD_D &&
+       metadata_->opcode <= Opcode::RISCV_FDIV_S) ||
+      (metadata_->opcode >= Opcode::RISCV_FEQ_D &&
+       metadata_->opcode <= Opcode::RISCV_FSW)) {
     // Floating point operation
     setInstructionType(InsnType::isFloat);
-    if ((metadata_.opcode >= Opcode::RISCV_FCVT_D_L &&
-         metadata_.opcode <= Opcode::RISCV_FCVT_W_S)) {
+    if ((metadata_->opcode >= Opcode::RISCV_FCVT_D_L &&
+         metadata_->opcode <= Opcode::RISCV_FCVT_W_S)) {
       setInstructionType(InsnType::isConvert);
     }
   }
 
   // Set branch type
-  switch (metadata_.opcode) {
+  switch (metadata_->opcode) {
     case Opcode::RISCV_BEQ:
     case Opcode::RISCV_BNE:
     case Opcode::RISCV_BLT:

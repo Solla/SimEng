@@ -24,7 +24,7 @@ TEST_F(GenericPredictorTest, Miss) {
       "2}}");
   auto predictor = simeng::GenericPredictor();
   auto prediction = predictor.predict(0, BranchType::Conditional, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
 
   Config::set(
       "{Branch-Predictor: {BTB-Tag-Bits: 11, Saturating-Count-Bits: 2, "
@@ -32,9 +32,9 @@ TEST_F(GenericPredictorTest, Miss) {
       "1}}");
   predictor = simeng::GenericPredictor();
   prediction = predictor.predict(0, BranchType::Conditional, 0);
-  EXPECT_FALSE(prediction.taken);
+  EXPECT_FALSE(prediction.isTaken);
   prediction = predictor.predict(8, BranchType::Unconditional, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
 }
 
 // Tests that a GenericPredictor will predict branch-and-link return pairs
@@ -46,35 +46,35 @@ TEST_F(GenericPredictorTest, RAS) {
       "2}}");
   auto predictor = simeng::GenericPredictor();
   auto prediction = predictor.predict(8, BranchType::SubroutineCall, 8);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 16);
   prediction = predictor.predict(24, BranchType::SubroutineCall, 8);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 32);
   prediction = predictor.predict(40, BranchType::SubroutineCall, 8);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 48);
   prediction = predictor.predict(56, BranchType::SubroutineCall, 8);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 64);
   prediction = predictor.predict(72, BranchType::SubroutineCall, 8);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 80);
 
   prediction = predictor.predict(84, BranchType::Return, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 76);
   prediction = predictor.predict(68, BranchType::Return, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 60);
   prediction = predictor.predict(52, BranchType::Return, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 44);
   prediction = predictor.predict(36, BranchType::Return, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 28);
   prediction = predictor.predict(20, BranchType::Return, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 12);
 }
 
@@ -93,7 +93,7 @@ TEST_F(GenericPredictorTest, Hit) {
   predictor.update(0, false, 16, BranchType::Conditional);
 
   auto prediction = predictor.predict(0, BranchType::Conditional, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 16);
 }
 
@@ -113,7 +113,7 @@ TEST_F(GenericPredictorTest, GlobalIndexing) {
   predictor.update(0, true, 4, BranchType::Unconditional);
   // Ensure default behaviour for first encounter
   auto prediction = predictor.predict(0x1F, BranchType::Conditional, 0);
-  EXPECT_FALSE(prediction.taken);
+  EXPECT_FALSE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 0x23);
   // Set entry in BTB
   predictor.update(0x1F, true, 0xAB, BranchType::Conditional);
@@ -126,7 +126,7 @@ TEST_F(GenericPredictorTest, GlobalIndexing) {
   predictor.update(0, false, 4, BranchType::Unconditional);
   // Ensure default behaviour for re-encounter but with different global history
   prediction = predictor.predict(0x1F, BranchType::Conditional, 0);
-  EXPECT_FALSE(prediction.taken);
+  EXPECT_FALSE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 0x23);
   // Set entry in BTB
   predictor.update(0x1F, true, 0xBA, BranchType::Conditional);
@@ -139,7 +139,7 @@ TEST_F(GenericPredictorTest, GlobalIndexing) {
   predictor.update(0, true, 4, BranchType::Unconditional);
   // Get prediction
   prediction = predictor.predict(0x1F, BranchType::Conditional, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 0xAB);
   // Set entry in BTB
   predictor.update(0x1F, true, 0xAB, BranchType::Conditional);
@@ -152,7 +152,7 @@ TEST_F(GenericPredictorTest, GlobalIndexing) {
   predictor.update(0, false, 4, BranchType::Unconditional);
   // Get prediction
   prediction = predictor.predict(0x1F, BranchType::Conditional, 0);
-  EXPECT_TRUE(prediction.taken);
+  EXPECT_TRUE(prediction.isTaken);
   EXPECT_EQ(prediction.target, 0xBA);
   predictor.update(0x1F, true, 0xBA, BranchType::Conditional);
 }

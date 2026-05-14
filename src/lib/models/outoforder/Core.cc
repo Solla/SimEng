@@ -46,6 +46,7 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
           [this](auto regs, auto values) {
             dispatchIssueUnit_.forwardOperands(regs, values);
           },
+          [this](auto instruction) { raiseException(instruction); },
           config["LSQ-L1-Interface"]["Exclusive"].as<bool>(),
           config["LSQ-L1-Interface"]["Load-Bandwidth"].as<uint16_t>(),
           config["LSQ-L1-Interface"]["Store-Bandwidth"].as<uint16_t>(),
@@ -98,7 +99,7 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
         config["Execution-Units"][i]["Pipelined"].as<bool>(), blockingGroups);
   }
   // Provide reservation size getter to A64FX port allocator
-  portAllocator.setRSSizeGetter([this](std::vector<uint64_t>& sizeVec) {
+  portAllocator.setRSSizeGetter([this](std::vector<uint32_t>& sizeVec) {
     dispatchIssueUnit_.getRSSizes(sizeVec);
   });
   // Create exception handler based on chosen architecture
@@ -211,10 +212,10 @@ void Core::flushIfNeeded() {
     // Rename/Dispatch)
 
     if (reorderBuffer_.shouldFlush() &&
-        (!euFlush || reorderBuffer_.getFlushSeqId() < lowestSeqId)) {
+        (!euFlush || reorderBuffer_.getFlushInsnId() < lowestSeqId)) {
       // If the reorder buffer found an older instruction to flush up to, do
       // that instead
-      lowestSeqId = reorderBuffer_.getFlushSeqId();
+      lowestSeqId = reorderBuffer_.getFlushInsnId();
       targetAddress = reorderBuffer_.getFlushAddress();
     }
 

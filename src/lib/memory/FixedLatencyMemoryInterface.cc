@@ -3,9 +3,10 @@
 #include <cassert>
 
 namespace simeng {
+namespace memory {
 
 FixedLatencyMemoryInterface::FixedLatencyMemoryInterface(
-    std::shared_ptr<memory::MMU> mmu, uint16_t latency)
+    std::shared_ptr<MMU> mmu, uint16_t latency)
     : mmu_(mmu), latency_(latency) {}
 
 void FixedLatencyMemoryInterface::tick() {
@@ -29,14 +30,12 @@ void FixedLatencyMemoryInterface::tick() {
       // callback because they don't contain any information relevant to the
       // simulation.
       mmu_->bufferRequest(
-          memory::DataPacket(target.address, target.size, memory::WRITE_REQUEST,
-                             requestId, dt),
+          DataPacket(target.address, target.size, WRITE_REQUEST, requestId, dt),
           nullptr);
     } else {
       // Instantiate a callback function which will be invoked with the response
       // to a read request.
-      auto fn = [this, target,
-                 requestId](struct memory::DataPacket packet) -> void {
+      auto fn = [this, target, requestId](DataPacket packet) -> void {
         if (packet.inFault_) {
           completedReads_.push_back({target, RegisterValue(), requestId});
           return;
@@ -45,9 +44,8 @@ void FixedLatencyMemoryInterface::tick() {
             {target, RegisterValue(packet.data_.data(), packet.size_),
              requestId});
       };
-      mmu_->bufferRequest(memory::DataPacket(target.address, target.size,
-                                             memory::READ_REQUEST, requestId),
-                          fn);
+      mmu_->bufferRequest(
+          DataPacket(target.address, target.size, READ_REQUEST, requestId), fn);
     }
 
     // Remove the request from the queue
@@ -79,4 +77,5 @@ bool FixedLatencyMemoryInterface::hasPendingRequests() const {
   return !pendingRequests_.empty();
 }
 
+}  // namespace memory
 }  // namespace simeng

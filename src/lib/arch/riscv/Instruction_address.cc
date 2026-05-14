@@ -17,7 +17,7 @@ span<const memory::MemoryAccessTarget> Instruction::generateAddresses() {
       isInstruction(InsnType::isAtomic)) {
     // Atomics
     // Metadata operands[2] corresponds to instruction sourceRegValues[1]
-    assert(metadata_.operands[2].type == RISCV_OP_MEM &&
+    assert(metadata_->operands[2].type == RISCV_OP_MEM &&
            "metadata_ operand not of correct type during RISC-V address "
            "generation");
     address = sourceValues_[1].get<uint64_t>();
@@ -25,24 +25,24 @@ span<const memory::MemoryAccessTarget> Instruction::generateAddresses() {
              isInstruction(InsnType::isAtomic)) {
     // Load reserved
     // Metadata operands[1] corresponds to instruction sourceRegValues[0]
-    assert(metadata_.operands[1].type == RISCV_OP_MEM &&
+    assert(metadata_->operands[1].type == RISCV_OP_MEM &&
            "metadata_ operand not of correct type during RISC-V address "
            "generation");
     address = sourceValues_[0].get<uint64_t>();
   } else if (isInstruction(InsnType::isStore) &&
              isInstruction(InsnType::isAtomic)) {
     // Store conditional
-    assert(metadata_.operands[2].type == RISCV_OP_MEM &&
+    assert(metadata_->operands[2].type == RISCV_OP_MEM &&
            "metadata_ operand not of correct type during RISC-V address "
            "generation");
     address = sourceValues_[1].get<uint64_t>();
   } else if (isInstruction(InsnType::isLoad)) {
-    assert(metadata_.operands[1].type == RISCV_OP_MEM &&
+    assert(metadata_->operands[1].type == RISCV_OP_MEM &&
            "metadata_ operand not of correct type during RISC-V address "
            "generation");
     address = sourceValues_[0].get<uint64_t>() + sourceImm_;
   } else {
-    assert((metadata_.operands[1].type == RISCV_OP_MEM) &&
+    assert((metadata_->operands[1].type == RISCV_OP_MEM) &&
            "metadata_ operand not of correct type during RISC-V address "
            "generation");
 
@@ -50,10 +50,10 @@ span<const memory::MemoryAccessTarget> Instruction::generateAddresses() {
   }
 
   // Atomics
-  if (Opcode::RISCV_AMOADD_D <= metadata_.opcode &&
-      metadata_.opcode <= Opcode::RISCV_AMOXOR_W_RL) {  // Atomics
+  if (Opcode::RISCV_AMOADD_D <= metadata_->opcode &&
+      metadata_->opcode <= Opcode::RISCV_AMOXOR_W_RL) {  // Atomics
     // THIS IS DEPENDENT ON CAPSTONE ENCODING AND COULD BREAK IF CHANGED
-    int size = ((metadata_.opcode - 182) / 4) % 2;  // 1 = Word, 0 = Double
+    int size = ((metadata_->opcode - 182) / 4) % 2;  // 1 = Word, 0 = Double
     if (size == 1) {
       // Word
       setMemoryAddresses({{address, 4}});
@@ -64,7 +64,7 @@ span<const memory::MemoryAccessTarget> Instruction::generateAddresses() {
     return getGeneratedAddresses();
   }
 
-  switch (metadata_.opcode) {
+  switch (metadata_->opcode) {
     case Opcode::RISCV_SD:
       [[fallthrough]];
     case Opcode::RISCV_LD:

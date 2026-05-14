@@ -42,9 +42,9 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
 
   // Ammend prediction based on branch type
   if (type == BranchType::Unconditional) {
-    prediction.taken = true;
+    prediction.isTaken = true;
   } else if (type == BranchType::Return) {
-    prediction.taken = true;
+    prediction.isTaken = true;
     // Return branches can use the RAS if an entry is available
     if (ras_.size() > 0) {
       prediction.target = ras_.back();
@@ -53,7 +53,7 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
       ras_.pop_back();
     }
   } else if (type == BranchType::SubroutineCall) {
-    prediction.taken = true;
+    prediction.isTaken = true;
     // Subroutine call branches must push their associated return address to RAS
     if (ras_.size() >= rasSize_) {
       ras_.pop_front();
@@ -62,13 +62,14 @@ BranchPrediction GenericPredictor::predict(uint64_t address, BranchType type,
     // Record that this address is a branch-and-link instruction
     rasHistory_[address] = 0;
   } else if (type == BranchType::Conditional) {
-    if (!prediction.taken) prediction.target = address + 4;
+    if (!prediction.isTaken) prediction.target = address + 4;
   }
   return prediction;
 }
 
 void GenericPredictor::update(uint64_t address, bool taken,
-                              uint64_t targetAddress, BranchType type) {
+                              uint64_t targetAddress, BranchType type,
+                              uint64_t instructionId) {
   // Get previous index calculated for the instruction address supplied
   uint64_t hashedIndex = btbHistory_[address];
 

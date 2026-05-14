@@ -2,11 +2,14 @@
 Core:
   ISA: AArch64
   Simulation-Mode: outoforder
+  Clock-Frequency: 3.5
   Clock-Frequency-GHz: 3.5
+  Timer-Frequency: 100
   Timer-Frequency-MHz: 100
   Micro-Operations: True
   Vector-Length: 128
   Streaming-Vector-Length: 512
+  Timer-Frequency: 100
 Fetch:
   Fetch-Block-Size: 64
   MOP-Queue-Size: 2
@@ -16,6 +19,7 @@ Fetch:
 Process-Image:
   Heap-Size: 2147483648
   Stack-Size: 2097152
+  Mmap-Size: 2147483648
   Dynamic-Linking: True
   Interpreter-Path: /usr/aarch64-linux-gnu/lib/ld-linux-aarch64.so.1
 Register-Set:
@@ -60,110 +64,174 @@ LSQ-L1-Interface:
 Ports:
   0:
     Portname: Branch0
+    Instruction-Support:
+      - BRANCH
     Instruction-Group-Support:
       - BRANCH
   1:
     Portname: Branch1
+    Instruction-Support:
+      - BRANCH
     Instruction-Group-Support:
       - BRANCH
   2:
     Portname: Branch2
+    Instruction-Support:
+      - BRANCH
     Instruction-Group-Support:
       - BRANCH
   3:
     Portname: INT_S0
+    Instruction-Support:
+      - INT_SIMPLE
     Instruction-Group-Support:
       - INT_SIMPLE
   4:
     Portname: INT_S1
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
     Instruction-Group-Support:
       - INT_SIMPLE
       - INT_MUL
   5:
     Portname: INT_S2
+    Instruction-Support:
+      - INT_SIMPLE
     Instruction-Group-Support:
       - INT_SIMPLE
   6:
     Portname: INT_S3
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
     Instruction-Group-Support:
       - INT_SIMPLE
       - INT_MUL
   7:
     Portname: INT_S4
+    Instruction-Support:
+      - INT_SIMPLE
     Instruction-Group-Support:
       - INT_SIMPLE
   8:
     Portname: INT_S5
+    Instruction-Support:
+      - INT_SIMPLE
     Instruction-Group-Support:
       - INT_SIMPLE
   9:
     Portname: INT_M0
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_DIV_OR_SQRT
     Instruction-Group-Support:
       - INT_SIMPLE
       - INT_DIV_OR_SQRT
   10:
     Portname: INT_M1
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
     Instruction-Group-Support:
       - INT_SIMPLE
       - INT_MUL
   11:
     Portname: LS0
+    Instruction-Support:
+      - LOAD
+      - STORE
     Instruction-Group-Support:
       - LOAD
       - STORE
   12:
     Portname: LS1
+    Instruction-Support:
+      - LOAD
+      - STORE
     Instruction-Group-Support:
       - LOAD
       - STORE
   13:
     Portname: L2
+    Instruction-Support:
+      - LOAD
     Instruction-Group-Support:
       - LOAD
   14:
     Portname: L3
+    Instruction-Support:
+      - LOAD
     Instruction-Group-Support:
       - LOAD
   15:
     Portname: D0
+    Instruction-Support:
+      - STORE
     Instruction-Group-Support:
       - STORE
   16:
     Portname: D1
+    Instruction-Support:
+      - STORE
     Instruction-Group-Support:
       - STORE
   17:
     Portname: V0
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
     Instruction-Group-Support:
       - FP
       - VECTOR
       - SCALAR
   18:
     Portname: V1
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
     Instruction-Group-Support:
       - FP
       - VECTOR
       - SCALAR
   19:
     Portname: V2
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
     Instruction-Group-Support:
       - FP
       - VECTOR
       - SCALAR
   20:
     Portname: V3
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
     Instruction-Group-Support:
       - FP
       - VECTOR
       - SCALAR
   21:
     Portname: V4
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
     Instruction-Group-Support:
       - FP
       - VECTOR
       - SCALAR
   22:
     Portname: V5
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
     Instruction-Group-Support:
       - FP
       - VECTOR
@@ -290,7 +358,7 @@ Latencies:
     Execution-Latency: 1
     Execution-Throughput: 1
 CPU-Info:
-  Generate-Special-Dir: True
+  Generate-Special-Dir: False
   Special-File-Dir-Path: /usr/aarch64-linux-gnu
   Core-Count: 1
   Socket-Count: 1
@@ -303,3 +371,6 @@ CPU-Info:
   CPU-Part: "0x001"
   CPU-Revision: 0
   Package-Count: 1
+Simulation-Memory:
+  Size: 8589934592 # 8GiB
+

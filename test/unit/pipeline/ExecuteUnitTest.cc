@@ -35,7 +35,7 @@ class PipelineExecuteUnitTest : public testing::Test {
             [this](auto instruction) {
               executionHandlers.raiseException(instruction);
             },
-            true, {3, 4, 5}),
+            predictor, true, {3, 4, 5}),
         uop(new MockInstruction),
         secondUop(new MockInstruction),
         thirdUop(new MockInstruction),
@@ -292,7 +292,7 @@ TEST_F(PipelineExecuteUnitTest, mispredictedBranch) {
   EXPECT_EQ(executeUnit.shouldFlush(), true);
   EXPECT_EQ(output.getTailSlots()[0].get(), uop);
   EXPECT_EQ(executeUnit.getFlushAddress(), pc);
-  EXPECT_EQ(executeUnit.getFlushInsnId(), insnID);
+  EXPECT_EQ(executeUnit.getFlushSeqId(), insnID);
 }
 
 // Test that the flushing mechansim works correctly via purgeFlushed()

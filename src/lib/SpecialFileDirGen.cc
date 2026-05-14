@@ -24,10 +24,10 @@ void SpecialFileDirGen::RemoveExistingSFDir() {
   const std::string exist_input = "[ ! -d " + specialFilesDir_ + " ]";
   if (system(exist_input.c_str())) {
     const std::string rm_input = "rm -r " + specialFilesDir_;
-    system(rm_input.c_str());
+    [[maybe_unused]] auto unused1 = system(rm_input.c_str());
   }
   const std::string mk_input = "mkdir " + specialFilesDir_;
-  system(mk_input.c_str());
+  [[maybe_unused]] auto unused2 = system(mk_input.c_str());
   return;
 }
 
@@ -38,11 +38,12 @@ void SpecialFileDirGen::GenerateSFDir() {
   const std::string cpu_base_dir =
       specialFilesDir_ + "/sys/devices/system/cpu/cpu";
 
-  system(("mkdir " + proc_dir).c_str());
-  system(("mkdir " + specialFilesDir_ + "/sys/").c_str());
-  system(("mkdir " + specialFilesDir_ + "/sys/devices/").c_str());
-  system(("mkdir " + specialFilesDir_ + "/sys/devices/system/").c_str());
-  system(("mkdir " + online_dir).c_str());
+  int unused = system(("mkdir " + proc_dir).c_str());
+  unused = system(("mkdir " + specialFilesDir_ + "/sys/").c_str());
+  unused = system(("mkdir " + specialFilesDir_ + "/sys/devices/").c_str());
+  unused = system(("mkdir " + specialFilesDir_ + "/sys/devices/system/").c_str());
+  unused = system(("mkdir " + online_dir).c_str());
+  (void)unused;
 
   // Create '/proc/cpuinfo' file.
   std::ofstream cpuinfo_File(proc_dir + "cpuinfo");
@@ -90,9 +91,10 @@ void SpecialFileDirGen::GenerateSFDir() {
 
   // Create sub directory for each CPU core and required files.
   for (int i = 0; i < core_count * socket_count * smt; i++) {
-    system(("mkdir " + cpu_base_dir + std::to_string(i) + "/").c_str());
-    system(
+    int unused = system(("mkdir " + cpu_base_dir + std::to_string(i) + "/").c_str());
+    unused = system(
         ("mkdir " + cpu_base_dir + std::to_string(i) + "/topology/").c_str());
+    (void)unused;
   }
 
   // Create '/sys/devices/system/cpu/cpuX/topology/{core_id,

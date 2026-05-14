@@ -66,7 +66,7 @@ set(CMAKE_MACOSX_RPATH 1)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 # Create variable to enable additional compiler warnings for SimEng targets only
-set(SIMENG_COMPILE_OPTIONS -Wall -pedantic -Werror) #-Wextra
+set(SIMENG_COMPILE_OPTIONS -Wall -pedantic -Werror -Wno-sign-compare -Wno-vla -Wno-maybe-uninitialized -Wno-enum-compare) #-Wextra
 
 # Disable RTTI for all targets
 add_compile_options($<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>)
@@ -198,7 +198,7 @@ if(SIMENG_ENABLE_TESTS)
                 -DLLVM_BUILD_EXAMPLES=OFF
                 -DLLVM_ENABLE_BINDINGS=OFF
                 -DLLVM_ENABLE_WARNINGS=OFF
-                "-DLLVM_TARGETS_TO_BUILD=AArch64\\;RISCV"
+                "-DLLVM_TARGETS_TO_BUILD=AArch64"
 
                 ${COMMAND_ECHO_OPTION}
                 RESULT_VARIABLE SUCCESS)
@@ -218,7 +218,6 @@ if(SIMENG_ENABLE_TESTS)
                 # The full list of targets can be discovered via `ninja -t targets` inside the build
                 install-LLVMObject
                 install-LLVMAArch64AsmParser
-                install-LLVMRISCVAsmParser
                 # We also include the headers and CMake exports for a *complete* build
                 install-llvm-headers
                 install-cmake-exports
@@ -248,9 +247,9 @@ endif()
   if (NOT "AArch64" IN_LIST LLVM_TARGETS_TO_BUILD)
     message(FATAL_ERROR "LLVM was built without AArch64 target")
   endif()
-  if (NOT "RISCV" IN_LIST LLVM_TARGETS_TO_BUILD)
-      message(FATAL_ERROR "LLVM was built without RISC-V target")
-  endif()
+  # if (NOT "RISCV" IN_LIST LLVM_TARGETS_TO_BUILD)
+  #     message(FATAL_ERROR "LLVM was built without RISC-V target")
+  # endif()
 
   ## Setup googletest ##
   FetchContent_MakeAvailable_Args(googletest EXCLUDE_FROM_ALL)

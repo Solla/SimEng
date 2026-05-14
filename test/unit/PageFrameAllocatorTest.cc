@@ -13,7 +13,7 @@ TEST(PFATest, AllocateSinglePageFrame) {
   ASSERT_EQ(addr, 0);
   ASSERT_EQ(allctr.getNextFreeAddr(), 4096);
   ASSERT_EQ(allctr.getSizeLeft(), memSize - 4096);
-};
+}
 
 TEST(PFATest, AllocateMultiplePageFramesIndividually) {
   uint64_t memSize = 1024000000;
@@ -28,7 +28,7 @@ TEST(PFATest, AllocateMultiplePageFramesIndividually) {
   ASSERT_EQ(addr, 4096);
   ASSERT_EQ(allctr.getNextFreeAddr(), 8192);
   ASSERT_EQ(allctr.getSizeLeft(), memSize - 8192);
-};
+}
 
 TEST(PFATest, AllocateMultiplePageFramesCollectively) {
   uint64_t memSize = 1024000000;
@@ -43,7 +43,7 @@ TEST(PFATest, AllocateMultiplePageFramesCollectively) {
   ASSERT_EQ(addr, 16384);
   ASSERT_EQ(allctr.getNextFreeAddr(), 16384 * 2);
   ASSERT_EQ(allctr.getSizeLeft(), memSize - (16384 * 2));
-};
+}
 
 TEST(PFATest, AllocateSizeSmallerThanPageSize) {
   uint64_t memSize = 1024000000;
@@ -53,7 +53,7 @@ TEST(PFATest, AllocateSizeSmallerThanPageSize) {
   ASSERT_EQ(addr, 0);
   ASSERT_EQ(allctr.getNextFreeAddr(), 4096);
   ASSERT_EQ(allctr.getSizeLeft(), memSize - 4096);
-};
+}
 
 TEST(PFATest, AllocateUnalignedSizeGreaterThanPageSize) {
   uint64_t memSize = 1024000000;
@@ -63,7 +63,7 @@ TEST(PFATest, AllocateUnalignedSizeGreaterThanPageSize) {
   ASSERT_EQ(addr, 0);
   ASSERT_EQ(allctr.getNextFreeAddr(), 12288);
   ASSERT_EQ(allctr.getSizeLeft(), memSize - 12288);
-};
+}
 
 TEST(PFATest, AllocateMaximumSize) {
   uint64_t memSize = 1024000000;
@@ -73,7 +73,7 @@ TEST(PFATest, AllocateMaximumSize) {
   ASSERT_EQ(addr, 0);
   ASSERT_EQ(allctr.getNextFreeAddr(), 1024000000);
   ASSERT_EQ(allctr.getSizeLeft(), 0);
-};
+}
 
 TEST(PFATest, AllocateSizeGreaterThanMaxAllocationSize) {
   uint64_t memSize = 1024000000;
@@ -84,6 +84,6 @@ TEST(PFATest, AllocateSizeGreaterThanMaxAllocationSize) {
       "\\[SimEng:PageFrameAllocator\\] Cannot allocate more page frames! "
       "Increase the \\{Simulation-Memory\\:\\{Size:<size>\\}\\} parameter "
       "in the YAML config file used to run the simulation.");
-};
+}
 
 }  // namespace

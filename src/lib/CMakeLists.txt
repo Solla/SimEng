@@ -20,6 +20,7 @@ set(SIMENG_SOURCES
     branchpredictors/TAGEPredictor.cc
     config/ModelConfig.cc
     config/SimInfo.cc
+    ModelConfig.cc
     kernel/Linux.cc
     kernel/LinuxProcess.cc
     kernel/MemRegion.cc
@@ -72,9 +73,10 @@ set_target_properties(libsimeng PROPERTIES OUTPUT_NAME simeng)
 
 target_include_directories(libsimeng PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_include_directories(libsimeng PUBLIC ${CMAKE_CURRENT_BINARY_DIR})
-target_link_libraries(libsimeng capstone yaml-cpp elf)
+target_link_libraries(libsimeng capstone yaml-cpp)
 # Only enable compiler warnings for our code
 target_compile_options(libsimeng PRIVATE ${SIMENG_COMPILE_OPTIONS})
+target_compile_definitions(libsimeng PUBLIC CAPSTONE_AARCH64_COMPAT_HEADER)
 
 set_target_properties(libsimeng PROPERTIES VERSION ${SimEng_VERSION})
 set_target_properties(libsimeng PROPERTIES SOVERSION ${SimEng_VERSION_MAJOR})

@@ -343,31 +343,21 @@ void Instruction::decode() {
       // No operands are required for this operation.
       // Any access to SVCR other than SMSTART and SMSTOP (i.e. this OP_TYPE)
       // will result in an `unmapped system register` exception.
-    }
-  }
-
-  // Handle SVE predicated instructions: Search for predicate registers in operands
-  // that might not have been extracted yet. For ZPmZ format instructions, the
-  // predicate register needs to be in source registers for dependency tracking.
-  for (size_t i = 0; i < metadata.operandCount; i++) {
-    const auto& op = metadata.operands[i];
-    if (op.type == AARCH64_OP_REG && op.reg >= AARCH64_REG_P0 &&
-        op.reg <= AARCH64_REG_P15) {
-      Register predReg = csRegToRegister(op.reg);
-      // Check if this predicate hasn't been added yet as a source
-      bool alreadyAdded = false;
-      for (uint16_t j = 0; j < sourceRegisterCount; j++) {
-        if (sourceRegisters[j].type == predReg.type &&
-            sourceRegisters[j].tag == predReg.tag) {
-          alreadyAdded = true;
-          break;
+    } else if (op.type == AARCH64_OP_PRED) {
+      // SVE predicate operand: Capstone exposes Pg via op.pred.reg rather than
+      // op.reg. Treat as a normal predicate register access, defaulting to READ
+      // when no access flags are set (common for SVE governing predicates).
+      aarch64_reg predReg = op.pred.reg;
+      if (predReg >= AARCH64_REG_P0 && predReg <= AARCH64_REG_P15) {
+        bool isWrite = (op.access & cs_ac_type::CS_AC_WRITE);
+        bool isRead = (op.access & cs_ac_type::CS_AC_READ) || op.access == 0;
+        if (isWrite) {
+          isPredicate_ = true;
+          destinationRegisters.push_back(csRegToRegister(predReg));
+          destinationRegisterCount++;
         }
-      }
-      if (!alreadyAdded) {
-        // Only add if operand has read access (or no explicit access specified)
-        if ((op.access & cs_ac_type::CS_AC_READ) ||
-            op.access == 0) {  // Some operands might have no access info
-          sourceRegisters.push_back(predReg);
+        if (isRead) {
+          sourceRegisters.push_back(csRegToRegister(predReg));
           sourceRegisterCount++;
           operandsPending++;
         }

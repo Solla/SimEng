@@ -11,16 +11,16 @@ namespace arch {
 namespace riscv {
 
 Instruction::Instruction(const Architecture& architecture,
-                         const InstructionMetadata& metadata)
+                         std::shared_ptr<const InstructionMetadata> metadata)
     : architecture_(architecture),
       metadata_(metadata),
-      exception_(metadata.getMetadataException()) {
-  exceptionEncountered_ = metadata.getMetadataExceptionEncountered();
+      exception_(metadata->getMetadataException()) {
+  exceptionEncountered_ = metadata->getMetadataExceptionEncountered();
   decode();
 }
 
 Instruction::Instruction(const Architecture& architecture,
-                         const InstructionMetadata& metadata,
+                         std::shared_ptr<const InstructionMetadata> metadata,
                          InstructionException exception)
     : architecture_(architecture), metadata_(metadata) {
   exception_ = exception;
@@ -151,6 +151,10 @@ void Instruction::setExecutionInfo(const ExecutionInfo& info) {
 }
 
 const InstructionMetadata& Instruction::getMetadata() const {
+  return *metadata_;
+}
+
+std::shared_ptr<const InstructionMetadata> Instruction::getMetadataPtr() const {
   return metadata_;
 }
 

@@ -2,7 +2,14 @@
 
 #include <cstring>
 
+#include "simeng/Register.hh"
+
 namespace simeng {
+
+std::ostream& operator<<(std::ostream& os, simeng::Register const& reg) {
+  os << "{type=" << (int)reg.type << ", tag=" << reg.tag << "}";
+  return os;
+}
 
 Pool pool = Pool();
 

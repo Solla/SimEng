@@ -35,10 +35,11 @@ class ExceptionHandler : public simeng::arch::ExceptionHandler {
   /** Retrieve the results of the handled exception. */
   const ExceptionResult& getResult() const override;
 
- private:
   /** Prints a description of the exception and the instruction that generated
    * it. */
   void printException() const;
+
+ private:
 
   /** This function begins the handling of the generated exception passed via
    * registerException(). Returns `true` if no further cycles are required or

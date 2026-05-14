@@ -104,7 +104,7 @@ uint64_t MemRegion::updateBrkRegion(uint64_t brk) {
     std::exit(1);
   }
 
-  uint64_t retAddr =
+  [[maybe_unused]] uint64_t retAddr =
       mmapRegion(newBrk, newBrk - oldBrk, 0, SIMENG_MAP_FIXED, HostFileMMap());
   assert(
       retAddr == newBrk &&

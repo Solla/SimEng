@@ -7,9 +7,11 @@ namespace simeng {
 namespace arch {
 namespace aarch64 {
 
+using simeng::memory::MemoryAccessTarget;
+
 void generateContiguousAddresses(
     uint64_t base, uint16_t num, uint8_t size,
-    std::vector<simeng::MemoryAccessTarget>& addresses) {
+    std::vector<simeng::memory::MemoryAccessTarget>& addresses) {
   for (uint16_t addr = 0; addr < num; addr++) {
     addresses.push_back({base + (addr * size), size});
   }
@@ -21,7 +23,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
   if (isMicroOp_) {
     switch (microOpcode_) {
       case MicroOpcode::LDR_ADDR: {
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(
             operands[0].get<uint64_t>() + metadata.operands[1].mem.disp, 1,
             dataSize_, addresses);
@@ -30,7 +32,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         break;
       }
       case MicroOpcode::STR_ADDR: {
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(
             operands[0].get<uint64_t>() + metadata.operands[0].mem.disp, 1,
             dataSize_, addresses);
@@ -282,7 +284,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         setMemoryAddresses(std::move(addresses));
         break;
       }
-      case Opcode::AArch64_LD1D_IMM_REAL: {  // ld1d {zt.d}, pg/z, [xn{, #imm,
+      case Opcode::AArch64_LD1D_IMM: {  // ld1d {zt.d}, pg/z, [xn{, #imm,
                                              // mul vl}]
         const uint64_t* p = operands[0].getAsVector<uint64_t>();
         const uint16_t partition_num = VL_bits / 64;
@@ -347,7 +349,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         setMemoryAddresses(std::move(addresses));
         break;
       }
-      case Opcode::AArch64_LD1W_IMM_REAL: {  // ld1w {zt.s}, pg/z, [xn{, #imm,
+      case Opcode::AArch64_LD1W_IMM: {  // ld1w {zt.s}, pg/z, [xn{, #imm,
                                              // mul vl}]
         const uint64_t* p = operands[0].getAsVector<uint64_t>();
         const uint16_t partition_num = VL_bits / 32;
@@ -578,7 +580,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_LDRWpre:    // ldr wt, [xn, #imm]!
       case Opcode::AArch64_LDRXui:     // ldr xt, [xn, #imm]
       case Opcode::AArch64_LDRXpre: {  // ldr xt, [xn, #imm]!
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(
             operands[0].get<uint64_t>() + metadata.operands[1].mem.disp, 1,
             dataSize_, addresses);
@@ -592,7 +594,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_LDRSpost:    // ldr st, [xn], #imm
       case Opcode::AArch64_LDRWpost:    // ldr wt, [xn], #imm
       case Opcode::AArch64_LDRXpost: {  // ldr xt, [xn], #imm
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(operands[0].get<uint64_t>(), 1, dataSize_,
                                     addresses);
         setMemoryAddresses(addresses);
@@ -660,8 +662,8 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         break;
       }
       case Opcode::AArch64_LDRXl: {  // ldr xt, #imm
-        setMemoryAddresses(
-            {{metadata.operands[1].imm + instructionAddress_, 8}});
+        uint64_t addr = metadata.operands[1].imm + instructionAddress_;
+        setMemoryAddresses({{addr, 8}});
         break;
       }
       case Opcode::AArch64_LDRXroW: {  // ldr xt, [xn, wn{, extend {#amount}}]
@@ -738,7 +740,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_LDPWpre:    // ldp wt1, wt2, [xn, #imm!]
       case Opcode::AArch64_LDPXi:      // ldp xt1, xt2, [xn, #imm]
       case Opcode::AArch64_LDPXpre: {  // ldp xt1, xt2, [xn, #imm!]
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(
             operands[0].get<uint64_t>() + metadata.operands[2].mem.disp, 2,
             dataSize_, addresses);
@@ -750,7 +752,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_LDPSpost:    // ldp st1, st2, [xn], #imm
       case Opcode::AArch64_LDPWpost:    // ldp wt1, wt2, [xn], #imm
       case Opcode::AArch64_LDPXpost: {  // ldp xt1, xt2, [xn], #imm
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(operands[0].get<uint64_t>(), 2, dataSize_,
                                     addresses);
         setMemoryAddresses(addresses);
@@ -907,7 +909,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         setMemoryAddresses(std::move(addresses));
         break;
       }
-      case Opcode::AArch64_SST1B_D_REAL: {  // st1b {zd.d}, pg, [xn, zm.d]
+      case Opcode::AArch64_SST1B_D: {  // st1b {zd.d}, pg, [xn, zm.d]
         const uint64_t* p = operands[1].getAsVector<uint64_t>();
         const uint16_t partition_num = VL_bits / 64;
 
@@ -926,7 +928,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         setMemoryAddresses(addresses);
         break;
       }
-      case Opcode::AArch64_SST1D_REAL: {  // st1d {zt.d}, pg, [xn, zm.d]
+      case Opcode::AArch64_SST1D: {  // st1d {zt.d}, pg, [xn, zm.d]
         const uint64_t* p = operands[1].getAsVector<uint64_t>();
         const uint16_t partition_num = VL_bits / 64;
 
@@ -946,7 +948,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         setMemoryAddresses(addresses);
         break;
       }
-      case Opcode::AArch64_SST1D_SCALED_SCALED_REAL: {  // st1d {zt.d}, pg, [xn,
+      case Opcode::AArch64_SST1D_SCALED: {  // st1d {zt.d}, pg, [xn,
                                                         // zm.d, lsl #3]
         const uint64_t* p = operands[1].getAsVector<uint64_t>();
         const uint16_t partition_num = VL_bits / 64;
@@ -1405,7 +1407,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_STPWpre:    // stp wt1, wt2, [xn, #imm]!
       case Opcode::AArch64_STPXi:      // stp xt1, xt2, [xn, #imm]
       case Opcode::AArch64_STPXpre: {  // stp xt1, xt2, [xn, #imm]!
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(
             operands[2].get<uint64_t>() + metadata.operands[2].mem.disp, 2,
             dataSize_, addresses);
@@ -1417,7 +1419,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_STPSpost:    // stp st1, st2, [xn], #imm
       case Opcode::AArch64_STPWpost:    // stp wt1, wt2, [xn], #imm
       case Opcode::AArch64_STPXpost: {  // stp xt1, xt2, [xn], #imm
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(operands[2].get<uint64_t>(), 2, dataSize_,
                                     addresses);
         setMemoryAddresses(addresses);
@@ -1477,7 +1479,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_STRWpre:    // str wt, [xn, #imm]!
       case Opcode::AArch64_STRXui:     // str xt, [xn, #imm]
       case Opcode::AArch64_STRXpre: {  // str xt, [xn, #imm]!
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(
             operands[1].get<uint64_t>() + metadata.operands[1].mem.disp, 1,
             dataSize_, addresses);
@@ -1491,7 +1493,7 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
       case Opcode::AArch64_STRSpost:    // str st, [xn], #imm
       case Opcode::AArch64_STRWpost:    // str wt, [xn], #imm
       case Opcode::AArch64_STRXpost: {  // str xt, [xn], #imm
-        std::vector<simeng::MemoryAccessTarget> addresses;
+        std::vector<simeng::memory::MemoryAccessTarget> addresses;
         generateContiguousAddresses(operands[1].get<uint64_t>(), 1, dataSize_,
                                     addresses);
         setMemoryAddresses(addresses);

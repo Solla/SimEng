@@ -154,7 +154,7 @@ bool ExceptionHandler::handleException() {
     auto metadata = instruction_->getMetadata();
 
     // Update SVCR value
-    const uint64_t svcrBits = static_cast<uint64_t>(metadata.operands[0].svcr);
+    const uint64_t svcrBits = static_cast<uint64_t>(metadata.operands[0].sysop.alias.svcr);
     const uint8_t imm = metadata.operands[1].imm;
     const uint64_t currSVCR = instruction_->getArchitecture().getSVCRval();
     uint64_t newSVCR = 0;

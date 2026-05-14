@@ -24,7 +24,7 @@ TEST(LatencyMemoryInterfaceTest, FixedWriteData) {
 
   // Write a 32-bit value to memory
   // Should ignore the 7 cycle latency and opt for the interface defined latency
-  simeng::MemoryAccessTarget target = {0, 4};
+  simeng::memory::MemoryAccessTarget target = {0, 4};
   simeng::RegisterValue value = (uint32_t)0xDEADBEEF;
   memory.requestWrite(target, value);
   EXPECT_TRUE(memory.hasPendingRequests());
@@ -63,11 +63,11 @@ TEST(LatencyMemoryInterfaceTest, UnMappedAddrRead) {
   simeng::FixedLatencyMemoryInterface memory(mmu, 1);
 
   // Create a target such that address + size will overflow
-  simeng::MemoryAccessTarget overflowTarget = {UINT64_MAX, 4};
+  simeng::memory::MemoryAccessTarget overflowTarget = {UINT64_MAX, 4};
   memory.requestRead(overflowTarget, 1);
 
   // Create a regular out-of-bounds target
-  simeng::MemoryAccessTarget target = {0, 8};
+  simeng::memory::MemoryAccessTarget target = {0, 8};
   memory.requestRead(target, 2);
 
   // Tick once - request should have completed

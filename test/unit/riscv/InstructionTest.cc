@@ -2,6 +2,7 @@
 #include "arch/riscv/InstructionMetadata.hh"
 #include "gmock/gmock.h"
 #include "simeng/arch/riscv/Instruction.hh"
+#include "simeng/kernel/Linux.hh"
 #include "simeng/version.hh"
 
 namespace simeng {
@@ -12,9 +13,8 @@ namespace riscv {
 class RiscVInstructionTest : public testing::Test {
  public:
   RiscVInstructionTest()
-      : os(config::SimInfo::getConfig()["CPU-Info"]["Special-File-Dir-Path"]
-               .as<std::string>()),
-        arch(os) {
+      : os(config::SimInfo::getConfig()),
+        arch() {
     // Create InstructionMetadata objects
     cs_open(CS_ARCH_RISCV, CS_MODE_RISCV64, &capstoneHandle);
     cs_option(capstoneHandle, CS_OPT_DETAIL, CS_OPT_ON);
@@ -32,7 +32,7 @@ class RiscVInstructionTest : public testing::Test {
         reinterpret_cast<const uint8_t*>(divInstrBytes.data());
     cs_disasm_iter(capstoneHandle, &encoding_div, &size_div, &address_div,
                    &rawInsn_div);
-    divMetadata = std::make_unique<InstructionMetadata>(rawInsn_div);
+    divMetadata = std::make_shared<InstructionMetadata>(rawInsn_div);
 
     // lbu
     cs_insn rawInsn_lbu;
@@ -44,7 +44,7 @@ class RiscVInstructionTest : public testing::Test {
         reinterpret_cast<const uint8_t*>(lbuInstrBytes.data());
     cs_disasm_iter(capstoneHandle, &encoding_lbu, &size_lbu, &address_lbu,
                    &rawInsn_lbu);
-    lbuMetadata = std::make_unique<InstructionMetadata>(rawInsn_lbu);
+    lbuMetadata = std::make_shared<InstructionMetadata>(rawInsn_lbu);
 
     // bgeu
     cs_insn rawInsn_bgeu;
@@ -56,11 +56,11 @@ class RiscVInstructionTest : public testing::Test {
         reinterpret_cast<const uint8_t*>(bgeuInstrBytes.data());
     cs_disasm_iter(capstoneHandle, &encoding_bgeu, &size_bgeu, &address_bgeu,
                    &rawInsn_bgeu);
-    bgeuMetadata = std::make_unique<InstructionMetadata>(rawInsn_bgeu);
+    bgeuMetadata = std::make_shared<InstructionMetadata>(rawInsn_bgeu);
 
     const uint8_t* badEncoding =
         reinterpret_cast<const uint8_t*>(invalidInstrBytes.data());
-    invalidMetadata = std::make_unique<InstructionMetadata>(badEncoding);
+    invalidMetadata = std::make_shared<InstructionMetadata>(badEncoding);
   }
 
   ~RiscVInstructionTest() { cs_close(&capstoneHandle); }
@@ -79,20 +79,20 @@ class RiscVInstructionTest : public testing::Test {
   // A Capstone decoding library handle, for decoding instructions.
   csh capstoneHandle;
 
-  kernel::Linux os;
+  simeng::kernel::Linux os;
   Architecture arch;
 
-  std::unique_ptr<InstructionMetadata> divMetadata;
-  std::unique_ptr<InstructionMetadata> lbuMetadata;
-  std::unique_ptr<InstructionMetadata> bgeuMetadata;
-  std::unique_ptr<InstructionMetadata> invalidMetadata;
+  std::shared_ptr<InstructionMetadata> divMetadata;
+  std::shared_ptr<InstructionMetadata> lbuMetadata;
+  std::shared_ptr<InstructionMetadata> bgeuMetadata;
+  std::shared_ptr<InstructionMetadata> invalidMetadata;
   InstructionException exception;
 };
 
 // Test that a valid instruction is created correctly
 TEST_F(RiscVInstructionTest, validInsn) {
   // Insn is `div	a3, a3, a0`
-  Instruction insn = Instruction(arch, *divMetadata.get());
+  Instruction insn = Instruction(arch, divMetadata);
   // Define instruction's registers
   std::vector<Register> destRegs = {{RegisterType::GENERAL, 13}};
   std::vector<Register> srcRegs = {{RegisterType::GENERAL, 13},
@@ -123,7 +123,7 @@ TEST_F(RiscVInstructionTest, validInsn) {
   EXPECT_EQ(insn.getKnownOffset(), 0);
   EXPECT_EQ(insn.getLatency(), 3);
   EXPECT_EQ(insn.getLSQLatency(), 1);
-  EXPECT_EQ(&insn.getMetadata(), divMetadata.get());
+  EXPECT_EQ((const void*)&insn.getMetadata(), (const void*)divMetadata.get());
   EXPECT_EQ(insn.getMicroOpIndex(), 0);
   EXPECT_EQ(insn.getResults().size(), 1);
   EXPECT_EQ(insn.getSequenceId(), 12);
@@ -154,7 +154,7 @@ TEST_F(RiscVInstructionTest, validInsn) {
 
 // Test that an invalid instruction can be created - invalid due to byte stream
 TEST_F(RiscVInstructionTest, invalidInsn_1) {
-  Instruction insn = Instruction(arch, *invalidMetadata.get());
+  Instruction insn = Instruction(arch, invalidMetadata);
   // Define instruction's registers
   std::vector<Register> destRegs = {};
   std::vector<Register> srcRegs = {};
@@ -185,7 +185,7 @@ TEST_F(RiscVInstructionTest, invalidInsn_1) {
   EXPECT_EQ(insn.getKnownOffset(), 0);
   EXPECT_EQ(insn.getLatency(), 1);
   EXPECT_EQ(insn.getLSQLatency(), 1);
-  EXPECT_EQ(&insn.getMetadata(), invalidMetadata.get());
+  EXPECT_EQ((const void*)&insn.getMetadata(), (const void*)invalidMetadata.get());
   EXPECT_EQ(insn.getMicroOpIndex(), 0);
   EXPECT_EQ(insn.getResults().size(), 0);
   EXPECT_EQ(insn.getSequenceId(), 14);
@@ -217,7 +217,7 @@ TEST_F(RiscVInstructionTest, invalidInsn_1) {
 // Test that an invalid instruction can be created - invalid due to exception
 // provided
 TEST_F(RiscVInstructionTest, invalidInsn_2) {
-  Instruction insn = Instruction(arch, *invalidMetadata.get(),
+  Instruction insn = Instruction(arch, invalidMetadata,
                                  InstructionException::HypervisorCall);
   // Define instruction's registers
   std::vector<Register> destRegs = {};
@@ -249,7 +249,7 @@ TEST_F(RiscVInstructionTest, invalidInsn_2) {
   EXPECT_EQ(insn.getKnownOffset(), 0);
   EXPECT_EQ(insn.getLatency(), 1);
   EXPECT_EQ(insn.getLSQLatency(), 1);
-  EXPECT_EQ(&insn.getMetadata(), invalidMetadata.get());
+  EXPECT_EQ((const void*)&insn.getMetadata(), (const void*)invalidMetadata.get());
   EXPECT_EQ(insn.getMicroOpIndex(), 0);
   EXPECT_EQ(insn.getResults().size(), 0);
   EXPECT_EQ(insn.getSequenceId(), 16);
@@ -281,7 +281,7 @@ TEST_F(RiscVInstructionTest, invalidInsn_2) {
 // Test to ensure that source and operand registers can be renamed correctly
 TEST_F(RiscVInstructionTest, renameRegs) {
   // Insn is `div	a3, a3, a0`
-  Instruction insn = Instruction(arch, *divMetadata.get());
+  Instruction insn = Instruction(arch, divMetadata);
   // Define instruction's registers
   std::vector<Register> destRegs = {{RegisterType::GENERAL, 13}};
   std::vector<Register> srcRegs = {{RegisterType::GENERAL, 13},
@@ -317,7 +317,7 @@ TEST_F(RiscVInstructionTest, renameRegs) {
 // `canExecute`
 TEST_F(RiscVInstructionTest, supplyOperand) {
   // Insn is `div	a3, a3, a0`
-  Instruction insn = Instruction(arch, *divMetadata.get());
+  Instruction insn = Instruction(arch, divMetadata);
   // Define instruction's registers
   std::vector<Register> destRegs = {{RegisterType::GENERAL, 13}};
   std::vector<Register> srcRegs = {{RegisterType::GENERAL, 13},
@@ -355,14 +355,14 @@ TEST_F(RiscVInstructionTest, supplyOperand) {
 // Test that data can be supplied successfully
 TEST_F(RiscVInstructionTest, supplyData) {
   // Insn is `lbu	a5, 0(s3)`
-  Instruction insn = Instruction(arch, *lbuMetadata.get());
+  Instruction insn = Instruction(arch, lbuMetadata);
   // Define instruction's registers
   std::vector<Register> destRegs = {{RegisterType::GENERAL, 15}};
   std::vector<Register> srcRegs = {{RegisterType::GENERAL, 19}};
 
   // Check instruction created correctly
   EXPECT_FALSE(insn.exceptionEncountered());
-  EXPECT_EQ(&insn.getMetadata(), lbuMetadata.get());
+  EXPECT_EQ((const void*)&insn.getMetadata(), (const void*)lbuMetadata.get());
   EXPECT_EQ(insn.getGroup(), InstructionGroups::LOAD_INT);
 
   // Check source and destination registers extracted correctly
@@ -405,13 +405,13 @@ TEST_F(RiscVInstructionTest, supplyData) {
 // Test DataAbort Exception is triggered correctly when supplying data
 TEST_F(RiscVInstructionTest, supplyData_dataAbort) {
   // Insn is `lbu	a5, 0(s3)`
-  Instruction insn = Instruction(arch, *lbuMetadata.get());
+  Instruction insn = Instruction(arch, lbuMetadata);
   // Define instruction's registers
   std::vector<Register> destRegs = {{RegisterType::GENERAL, 15}};
   std::vector<Register> srcRegs = {{RegisterType::GENERAL, 19}};
 
   // Check instruction created correctly
-  EXPECT_EQ(&insn.getMetadata(), lbuMetadata.get());
+  EXPECT_EQ((const void*)&insn.getMetadata(), (const void*)lbuMetadata.get());
   EXPECT_EQ(insn.getGroup(), InstructionGroups::LOAD_INT);
 
   // Supply needed operands
@@ -438,7 +438,7 @@ TEST_F(RiscVInstructionTest, supplyData_dataAbort) {
 // Test that a correct prediction (branch taken) is handled correctly
 TEST_F(RiscVInstructionTest, correctPred_taken) {
   // insn is `bgeu a5, a4, -86`
-  Instruction insn = Instruction(arch, *bgeuMetadata.get());
+  Instruction insn = Instruction(arch, bgeuMetadata);
   insn.setInstructionAddress(400);
 
   // Check initial state of an instruction's branch related options
@@ -466,7 +466,7 @@ TEST_F(RiscVInstructionTest, correctPred_taken) {
 // Test that a correct prediction (branch not taken) is handled correctly
 TEST_F(RiscVInstructionTest, correctPred_notTaken) {
   // insn is `bgeu a5, a4, -86`
-  Instruction insn = Instruction(arch, *bgeuMetadata.get());
+  Instruction insn = Instruction(arch, bgeuMetadata);
   insn.setInstructionAddress(400);
 
   // Check initial state of an instruction's branch related options
@@ -495,7 +495,7 @@ TEST_F(RiscVInstructionTest, correctPred_notTaken) {
 // Test that an incorrect prediction (wrong target) is handled correctly
 TEST_F(RiscVInstructionTest, incorrectPred_target) {
   // insn is `bgeu a5, a4, -86`
-  Instruction insn = Instruction(arch, *bgeuMetadata.get());
+  Instruction insn = Instruction(arch, bgeuMetadata);
   insn.setInstructionAddress(400);
 
   // Check initial state of an instruction's branch related options
@@ -524,7 +524,7 @@ TEST_F(RiscVInstructionTest, incorrectPred_target) {
 // Test that an incorrect prediction (wrong taken) is handled correctly
 TEST_F(RiscVInstructionTest, incorrectPred_taken) {
   // insn is `bgeu a5, a4, -86`
-  Instruction insn = Instruction(arch, *bgeuMetadata.get());
+  Instruction insn = Instruction(arch, bgeuMetadata);
   insn.setInstructionAddress(400);
 
   // Check initial state of an instruction's branch related options
@@ -553,7 +553,7 @@ TEST_F(RiscVInstructionTest, incorrectPred_taken) {
 // Test commit and flush setters such as `setFlushed`, `setCommitReady`, etc.
 TEST_F(RiscVInstructionTest, setters) {
   // Insn is `div	a3, a3, a0`
-  Instruction insn = Instruction(arch, *divMetadata.get());
+  Instruction insn = Instruction(arch, divMetadata);
 
   EXPECT_FALSE(insn.canCommit());
   insn.setCommitReady();

@@ -89,7 +89,7 @@ struct Elf_Binary {
 /** A processed Executable and Linkable Format (ELF) file. */
 class Elf {
  public:
-  Elf(std::string path);
+  Elf(std::string path, std::string interpreterPath = "");
 
   ~Elf() {}
 

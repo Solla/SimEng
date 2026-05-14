@@ -94,7 +94,7 @@ void Instruction::setStaticRoundingModeThen(
   // The 3 relevant bits are always in positions 12-14. Take second byte from
   // encoding and mask with 01110000. Shift right by 4 to remove trailing 0's
   // and improve readability
-  uint8_t rm = (metadata_.encoding[1] & 0x70) >> 4;
+  uint8_t rm = (metadata_->encoding[1] & 0x70) >> 4;
 
   /** A variable to hold the current fenv rounding mode/architectural dynamic
    * rounding mode. Used to restore the rounding mode after the architecturally
@@ -180,7 +180,7 @@ void Instruction::execute() {
   // Implementation of rv64imafdc according to the v. 20191213 unprivileged spec
 
   executed_ = true;
-  switch (metadata_.opcode) {
+  switch (metadata_->opcode) {
     case Opcode::RISCV_LB: {  // LB rd,rs1,imm
       results_[0] =
           RegisterValue(bitExtend(memoryData_[0].get<uint8_t>(), 8), 8);
@@ -453,7 +453,7 @@ void Instruction::execute() {
             instructionAddress_ + sourceImm_;  // Set LSB of result to 0
         branchTaken_ = true;
       } else {
-        branchAddress_ = instructionAddress_ + metadata_.getInsnLength();
+        branchAddress_ = instructionAddress_ + metadata_->getInsnLength();
         branchTaken_ = false;
       }
       break;
@@ -467,7 +467,7 @@ void Instruction::execute() {
         branchTaken_ = true;
       } else {
         // Increase by instruction size to account for compressed instructions
-        branchAddress_ = instructionAddress_ + metadata_.getInsnLength();
+        branchAddress_ = instructionAddress_ + metadata_->getInsnLength();
         branchTaken_ = false;
       }
       break;
@@ -480,7 +480,7 @@ void Instruction::execute() {
             instructionAddress_ + sourceImm_;  // Set LSB of result to 0
         branchTaken_ = true;
       } else {
-        branchAddress_ = instructionAddress_ + metadata_.getInsnLength();
+        branchAddress_ = instructionAddress_ + metadata_->getInsnLength();
         branchTaken_ = false;
       }
       break;
@@ -493,7 +493,7 @@ void Instruction::execute() {
             instructionAddress_ + sourceImm_;  // Set LSB of result to 0
         branchTaken_ = true;
       } else {
-        branchAddress_ = instructionAddress_ + metadata_.getInsnLength();
+        branchAddress_ = instructionAddress_ + metadata_->getInsnLength();
         branchTaken_ = false;
       }
       break;
@@ -506,7 +506,7 @@ void Instruction::execute() {
             instructionAddress_ + sourceImm_;  // Set LSB of result to 0
         branchTaken_ = true;
       } else {
-        branchAddress_ = instructionAddress_ + metadata_.getInsnLength();
+        branchAddress_ = instructionAddress_ + metadata_->getInsnLength();
         branchTaken_ = false;
       }
       break;
@@ -519,7 +519,7 @@ void Instruction::execute() {
             instructionAddress_ + sourceImm_;  // Set LSB of result to 0
         branchTaken_ = true;
       } else {
-        branchAddress_ = instructionAddress_ + metadata_.getInsnLength();
+        branchAddress_ = instructionAddress_ + metadata_->getInsnLength();
         branchTaken_ = false;
       }
       break;
@@ -529,7 +529,7 @@ void Instruction::execute() {
           instructionAddress_ + sourceImm_;  // Set LSB of result to 0
       branchTaken_ = true;
       results_[0] =
-          RegisterValue(instructionAddress_ + metadata_.getInsnLength(), 8);
+          RegisterValue(instructionAddress_ + metadata_->getInsnLength(), 8);
       break;
     }
     case Opcode::RISCV_JALR: {  // JALR rd,rs1,imm
@@ -537,7 +537,7 @@ void Instruction::execute() {
                        ~1;  // Set LSB of result to 0
       branchTaken_ = true;
       results_[0] =
-          RegisterValue(instructionAddress_ + metadata_.getInsnLength(), 8);
+          RegisterValue(instructionAddress_ + metadata_->getInsnLength(), 8);
       break;
     }
       // TODO EBREAK

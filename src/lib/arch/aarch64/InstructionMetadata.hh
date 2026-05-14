@@ -92,11 +92,20 @@ struct InstructionMetadata {
   /** Whether this instruction is an alias. */
   bool isAlias;
 
+  /** Whether this instruction uses writeback addressing. */
+  bool writeback;
+
   /** The explicit operands. */
   cs_aarch64_op operands[MAX_OPERANDS];
 
   /** The number of explicit operands. */
   uint8_t operandCount;
+
+  /** Revert aliased instruction mnemonics to canonical form. */
+  void revertAliasing();
+
+  /** Mark instruction as not-yet-implemented alias. */
+  void aliasNYI();
 
  private:
   /** The current exception state of this instruction. */

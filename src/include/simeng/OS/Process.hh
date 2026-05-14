@@ -6,9 +6,9 @@
 #include <functional>
 #include <memory>
 
-#include "simeng/Config.hh"
 #include "simeng/Elf.hh"
 #include "simeng/OS/FileDesc.hh"
+#include "simeng/RegisterFileSet.hh"
 #include "simeng/OS/MemRegion.hh"
 #include "simeng/OS/PageTable.hh"
 #include "simeng/SpecialFileDirGen.hh"
@@ -18,7 +18,7 @@ namespace simeng {
 // Forward declaration of class simeng::memory::Mem;
 namespace memory {
 class Mem;
-};
+}
 
 namespace OS {
 

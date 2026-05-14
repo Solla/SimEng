@@ -39,12 +39,16 @@ Process::Process(
       OS_(OS),
       sendToMem_(sendToMem) {
   // Parse ELF file
-  YAML::Node& config = Config::get();
+  [[maybe_unused]] YAML::Node& config = Config::get();
   pageTable_ = std::make_shared<PageTable>();
 
   // Parse the Elf file.
   assert(commandLine.size() > 0);
-  Elf elf(commandLine[0]);
+  std::string interpreterPath = "";
+  if (config["Process-Image"]["Interpreter-Path"]) {
+    interpreterPath = config["Process-Image"]["Interpreter-Path"].as<std::string>();
+  }
+  Elf elf(commandLine[0], interpreterPath);
   // if (!elf.isValid()) {
   // return;
   //}
@@ -119,7 +123,7 @@ Process::Process(
 
     uint64_t size = endAddrMemSz - startAddr;
 
-    uint64_t retAddr = memRegion_.mmapRegion(
+    [[maybe_unused]] uint64_t retAddr = memRegion_.mmapRegion(
         startAddr, size, 0, syscalls::mmap::flags::SIMENG_MAP_FIXED,
         HostFileMMap());
 
@@ -220,6 +224,8 @@ Process::Process(
   updateStack(stackPtr);
 
   fdArray_ = std::make_shared<FileDescArray>();
+  std::cout << "[SimEng:Process] Entry Point: 0x" << std::hex << getEntryPoint() << std::dec << std::endl;
+  std::cout << "[SimEng:Process] Stack Pointer: 0x" << std::hex << stackPtr << std::dec << std::endl;
   // Initialise context
   initContext(stackPtr, regFileStructure);
   isValid_ = true;
@@ -295,7 +301,7 @@ Process::Process(
   // Stack grows downwards towards lower addresses.
   uint64_t stackEnd = mmapEnd + PAGE_SIZE;
   uint64_t stackStart = stackEnd + stackSize;
-  uint64_t size = stackStart;
+  [[maybe_unused]] uint64_t size = stackStart;
 
   // Request Page frames for heap and stack memory.
   uint64_t instrPhyAddr = OS_->requestPageFrames(instrSize);

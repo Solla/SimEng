@@ -3,6 +3,44 @@
 #include <cassert>
 #include <cstring>
 
+// Compatibility defines for instruction aliases removed in new Capstone API.
+// These IDs are never emitted by new Capstone; cases are dead code.
+#define AARCH64_INS_AT       0x10001
+#define AARCH64_INS_BFI      0x10002
+#define AARCH64_INS_BFXIL    0x10003
+#define AARCH64_INS_CINC     0x10004
+#define AARCH64_INS_CINV     0x10005
+#define AARCH64_INS_CMN      0x10006
+#define AARCH64_INS_CMP      0x10007
+#define AARCH64_INS_CNEG     0x10008
+#define AARCH64_INS_CSET     0x10009
+#define AARCH64_INS_CSETM    0x1000A
+#define AARCH64_INS_DC       0x1000B
+#define AARCH64_INS_IC       0x1000C
+#define AARCH64_INS_MNEG     0x1000D
+#define AARCH64_INS_MVN      0x1000E
+#define AARCH64_INS_NEGS     0x1000F
+#define AARCH64_INS_NGC      0x10010
+#define AARCH64_INS_NGCS     0x10011
+#define AARCH64_INS_SBFIZ    0x10012
+#define AARCH64_INS_SBFX     0x10013
+#define AARCH64_INS_SMNEGL   0x10014
+#define AARCH64_INS_TLBI     0x10015
+#define AARCH64_INS_TST      0x10016
+#define AARCH64_INS_UBFIZ    0x10017
+#define AARCH64_INS_UBFX     0x10018
+#define AARCH64_INS_UMNEGL   0x10019
+
+// VAS (vector arrangement specifier) compat: old ARM64_VAS_* → AArch64Layout
+#define ARM64_VAS_INVALID AARCH64LAYOUT_INVALID
+#define ARM64_VAS_1B      AARCH64LAYOUT_VL_B
+#define ARM64_VAS_1H      AARCH64LAYOUT_VL_H
+#define ARM64_VAS_1S      AARCH64LAYOUT_VL_S
+#define ARM64_VAS_1D      AARCH64LAYOUT_VL_D
+
+// AARCH64_OP_SYS was removed in new Capstone (use sysop field instead)
+#define AARCH64_OP_SYS   0x20001
+
 namespace simeng {
 namespace arch {
 namespace aarch64 {
@@ -15,18 +53,33 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       groupCount(insn.detail->groups_count),
       cc(insn.detail->arm64.cc - 1),
       setsFlags(insn.detail->arm64.update_flags),
-      writeback(insn.detail->arm64.writeback),
+      writeback(insn.detail->arm64.post_index),
       operandCount(insn.detail->arm64.op_count) {
   std::memcpy(encoding, insn.bytes, sizeof(encoding));
   // Copy printed output
-  std::strncpy(mnemonic, insn.mnemonic, CS_MNEMONIC_SIZE);
+  mnemonic = insn.mnemonic;
   operandStr = std::string(insn.op_str);
 
   // Copy register/group/operand information
-  std::memcpy(implicitSources, insn.detail->regs_read,
-              sizeof(uint16_t) * implicitSourceCount);
-  std::memcpy(implicitDestinations, insn.detail->regs_write,
-              sizeof(uint16_t) * implicitDestinationCount);
+  uint8_t srcCount = 0;
+  for (uint8_t i = 0; i < insn.detail->regs_read_count; i++) {
+    uint16_t reg = insn.detail->regs_read[i];
+    if (reg != 0) {
+      implicitSources[srcCount++] = reg;
+    }
+  }
+  implicitSourceCount = srcCount;
+
+  uint8_t destCount = 0;
+  for (uint8_t i = 0; i < insn.detail->regs_write_count; i++) {
+    uint16_t reg = insn.detail->regs_write[i];
+    if (reg != 0) {
+      implicitDestinations[destCount++] = reg;
+    }
+  }
+  implicitDestinationCount = destCount;
+
+  groupCount = insn.detail->groups_count;
   std::memcpy(groups, insn.detail->groups, sizeof(uint8_t) * groupCount);
   std::memcpy(operands, insn.detail->arm64.operands,
               sizeof(cs_arm64_op) * operandCount);
@@ -53,7 +106,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       operands[2].access = CS_AC_READ;
-      operands[2].type = ARM64_OP_REG;
+      operands[2].type = AARCH64_OP_REG;
       break;
     }
     case Opcode::AArch64_SMIN_ZPmZ_S:
@@ -167,7 +220,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[3].access = CS_AC_READ;
       // Doesn't identify implicit NZCV destination
       implicitDestinationCount = 1;
-      implicitDestinations[0] = ARM64_REG_NZCV;
+      implicitDestinations[0] = AARCH64_REG_NZCV;
       break;
     case Opcode::AArch64_CNTB_XPiI:
       [[fallthrough]];
@@ -180,11 +233,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_WRITE;
       if (operandStr.length() < 4) {
         operandCount = 2;
-        operands[1].type = ARM64_OP_IMM;
+        operands[1].type = AARCH64_OP_IMM;
         operands[1].imm = 1;
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_INVALID, 0};
-        operands[1].ext = ARM64_EXT_INVALID;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[1].ext = AARCH64_EXT_INVALID;
         operands[1].vector_index = -1;
       }
       break;
@@ -193,7 +246,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       operands[2].access = CS_AC_READ;
-      operands[2].type = ARM64_OP_IMM;
+      operands[2].type = AARCH64_OP_IMM;
 
       char specifier = operandStr[operandStr.find(".") + 1];
       switch (specifier) {
@@ -242,11 +295,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       std::string str(operandStr);
       if (str.length() < 4) {
         operandCount = 2;
-        operands[1].type = ARM64_OP_IMM;
+        operands[1].type = AARCH64_OP_IMM;
         operands[1].imm = 1;
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_INVALID, 0};
-        operands[1].ext = ARM64_EXT_INVALID;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[1].ext = AARCH64_EXT_INVALID;
         operands[1].vector_index = -1;
       }
       break;
@@ -445,7 +498,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       operands[2].access = CS_AC_READ;
-      operands[3].type = ARM64_OP_FP;
+      operands[3].type = AARCH64_OP_FP;
       operands[3].access = CS_AC_READ;
       // Doesn't recognise immediate operands
       // Extract two possible values, 0.5 or 2.0
@@ -464,7 +517,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[2].access = CS_AC_READ;
       operands[3].access = CS_AC_READ;
       operands[4].access = CS_AC_READ;
-      operands[4].type = ARM64_OP_IMM;
+      operands[4].type = AARCH64_OP_IMM;
       break;
     }
     case Opcode::AArch64_FCADD_ZPmZ_D: {
@@ -474,7 +527,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[2].access = CS_AC_READ;
       operands[3].access = CS_AC_READ;
       operands[4].access = CS_AC_READ;
-      operands[4].type = ARM64_OP_IMM;
+      operands[4].type = AARCH64_OP_IMM;
       break;
     }
     case Opcode::AArch64_FSUB_ZPmI_D:
@@ -489,7 +542,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       operands[2].access = CS_AC_READ;
-      operands[3].type = ARM64_OP_FP;
+      operands[3].type = AARCH64_OP_FP;
       operands[3].access = CS_AC_READ;
       // Doesn't recognise immediate operands
       // Extract two possible values, 0.5 or 1.0
@@ -622,11 +675,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_READ | CS_AC_WRITE;
       if (operandStr.length() < 4) {
         operandCount = 2;
-        operands[1].type = ARM64_OP_IMM;
+        operands[1].type = AARCH64_OP_IMM;
         operands[1].imm = 1;
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_INVALID, 0};
-        operands[1].ext = ARM64_EXT_INVALID;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[1].ext = AARCH64_EXT_INVALID;
         operands[1].vector_index = -1;
       }
       break;
@@ -640,11 +693,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_READ | CS_AC_WRITE;
       if (operandStr.length() < 6) {
         operandCount = 2;
-        operands[1].type = ARM64_OP_IMM;
+        operands[1].type = AARCH64_OP_IMM;
         operands[1].imm = 1;
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_INVALID, 0};
-        operands[1].ext = ARM64_EXT_INVALID;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[1].ext = AARCH64_EXT_INVALID;
         operands[1].vector_index = -1;
       }
       break;
@@ -674,24 +727,24 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     case Opcode::AArch64_GLD1D_REAL: {
       // LD1D gather instruction doesn't correctly identify destination
       // register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
       } else {
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
 
       // No defined access types
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       // LD1D gather instruction doesn't correctly identify memory operands
-      operands[2].type = ARM64_OP_MEM;
+      operands[2].type = AARCH64_OP_MEM;
       operands[2].access = CS_AC_READ;
 
       // LD1D doesn't correctly identify vector memory register correctly
-      uint16_t vec_enum = ARM64_REG_Z0;
+      uint16_t vec_enum = AARCH64_REG_Z0;
       std::string tmp_str(operandStr.substr(operandStr.find("[")));
       // Single or double digit Z register identifier
       if (tmp_str.substr(tmp_str.find("z"))[2] == '.') {
@@ -699,7 +752,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       } else {
         vec_enum += std::stoi(tmp_str.substr(tmp_str.find("z") + 1, 2));
       }
-      operands[2].mem.index = static_cast<arm64_reg>(vec_enum);
+      operands[2].mem.index = static_cast<aarch64_reg>(vec_enum);
       break;
     }
     case Opcode::AArch64_LD1RQ_W_IMM: {
@@ -711,20 +764,20 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     case Opcode::AArch64_LD1RQ_D_IMM: {
       // LD1RQ gather instruction doesn't correctly identify destination
       // register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
       } else {
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
 
       // No defined access types
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       // LD1RQ gather instruction doesn't correctly identify memory operands
-      operands[2].type = ARM64_OP_MEM;
+      operands[2].type = AARCH64_OP_MEM;
       operands[2].access = CS_AC_READ;
       break;
     }
@@ -733,7 +786,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     case Opcode::AArch64_GLD1D_IMM_REAL: {
       // LD1D gather instruction doesn't correctly identify destination
       // register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
@@ -741,13 +794,13 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
       // No defined access types
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
       // LD1D gather instruction doesn't correctly identify second Z reg as
       // memory operand
-      operands[2].type = ARM64_OP_MEM;
+      operands[2].type = AARCH64_OP_MEM;
       operands[2].access = CS_AC_READ;
       // LD1D gather instruction doesn't recognise memory-offset immediate
       // correctly
@@ -770,7 +823,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       [[fallthrough]];
     case Opcode::AArch64_LD1D:
       [[fallthrough]];
-    case Opcode::AArch64_LD1D_IMM_REAL:
+    case Opcode::AArch64_LD1D_IMM:
       [[fallthrough]];
     case Opcode::AArch64_LD1RD_IMM:
       [[fallthrough]];
@@ -780,9 +833,9 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       [[fallthrough]];
     case Opcode::AArch64_LD1W:
       [[fallthrough]];
-    case Opcode::AArch64_LD1W_IMM_REAL: {
+    case Opcode::AArch64_LD1W_IMM: {
       // LD1RW doesn't correctly identify destination register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
@@ -790,7 +843,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
       // No defined access types
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
@@ -822,7 +875,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[1].access = CS_AC_READ | CS_AC_WRITE;
       // Fix for exclusion of post_index immediate in disassembly
       operandCount = 3;
-      operands[2].type = ARM64_OP_IMM;
+      operands[2].type = AARCH64_OP_IMM;
       operands[2].access = CS_AC_READ;
       // For vector arrangment of 16-bit, post_index immediate is 2
       operands[2].imm = 2;
@@ -834,7 +887,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[1].access = CS_AC_READ | CS_AC_WRITE;
       // Fix for exclusion of post_index immediate in disassembly
       operandCount = 3;
-      operands[2].type = ARM64_OP_IMM;
+      operands[2].type = AARCH64_OP_IMM;
       operands[2].access = CS_AC_READ;
       // For vector arrangment of 64-bit, post_index immediate is 8
       operands[2].imm = 8;
@@ -847,7 +900,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
 
       // Fix for exclusion of post_index immediate in disassembly
       operandCount = 3;
-      operands[2].type = ARM64_OP_IMM;
+      operands[2].type = AARCH64_OP_IMM;
       operands[2].access = CS_AC_READ;
       // For vector arrangment of 8-bit, post_index immediate is 1
       operands[2].imm = 1;
@@ -860,7 +913,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
 
       // Fix for exclusion of post_index immediate in disassembly
       operandCount = 3;
-      operands[2].type = ARM64_OP_IMM;
+      operands[2].type = AARCH64_OP_IMM;
       operands[2].access = CS_AC_READ;
       // For vector arrangment of 32-bit, post_index immediate is 4
       operands[2].imm = 4;
@@ -916,13 +969,13 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[1].access = CS_AC_READ;
       operands[2].access = CS_AC_READ;
       // No instruction id assigned
-      id = ARM64_INS_LSL;
+      id = AARCH64_INS_LSL;
       break;
     case Opcode::AArch64_LD2D:
     case Opcode::AArch64_LD2D_IMM: {
       // LD2D doesn't correctly identify destination registers
-      uint16_t reg_enum0 = ARM64_REG_Z0;
-      uint16_t reg_enum1 = ARM64_REG_Z0;
+      uint16_t reg_enum0 = AARCH64_REG_Z0;
+      uint16_t reg_enum1 = AARCH64_REG_Z0;
 
       // tmpOpStr = "zxx.d, zyy.d"
       std::string tmpOpStr(operandStr.substr(1, operandStr.find("}") - 1));
@@ -943,9 +996,9 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum1 += std::stoi(tmpOpStr.substr(1, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum0);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum0);
       operands[0].access = CS_AC_WRITE;
-      operands[1].reg = static_cast<arm64_reg>(reg_enum1);
+      operands[1].reg = static_cast<aarch64_reg>(reg_enum1);
       operands[1].access = CS_AC_WRITE;
 
       operands[2].access = CS_AC_READ;
@@ -954,9 +1007,9 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     }
     case Opcode::AArch64_LD3D_IMM: {
       // LD3D doesn't correctly identify destination registers
-      uint16_t reg_enum0 = ARM64_REG_Z0;
-      uint16_t reg_enum1 = ARM64_REG_Z0;
-      uint16_t reg_enum2 = ARM64_REG_Z0;
+      uint16_t reg_enum0 = AARCH64_REG_Z0;
+      uint16_t reg_enum1 = AARCH64_REG_Z0;
+      uint16_t reg_enum2 = AARCH64_REG_Z0;
 
       // tmpOpStr = "zxx.d, zyy.d, znn.d"
       std::string tmpOpStr(operandStr.substr(1, operandStr.find("}") - 1));
@@ -986,11 +1039,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum2 += std::stoi(tmpOpStr.substr(1, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum0);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum0);
       operands[0].access = CS_AC_WRITE;
-      operands[1].reg = static_cast<arm64_reg>(reg_enum1);
+      operands[1].reg = static_cast<aarch64_reg>(reg_enum1);
       operands[1].access = CS_AC_WRITE;
-      operands[2].reg = static_cast<arm64_reg>(reg_enum2);
+      operands[2].reg = static_cast<aarch64_reg>(reg_enum2);
       operands[2].access = CS_AC_WRITE;
 
       operands[3].access = CS_AC_READ;
@@ -999,10 +1052,10 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     }
     case Opcode::AArch64_LD4D_IMM: {
       // LD4D doesn't correctly identify destination registers
-      uint16_t reg_enum0 = ARM64_REG_Z0;
-      uint16_t reg_enum1 = ARM64_REG_Z0;
-      uint16_t reg_enum2 = ARM64_REG_Z0;
-      uint16_t reg_enum3 = ARM64_REG_Z0;
+      uint16_t reg_enum0 = AARCH64_REG_Z0;
+      uint16_t reg_enum1 = AARCH64_REG_Z0;
+      uint16_t reg_enum2 = AARCH64_REG_Z0;
+      uint16_t reg_enum3 = AARCH64_REG_Z0;
 
       // tmpOpStr = "zxx.d, zyy.d, znn.d, zmm.d"
       std::string tmpOpStr(operandStr.substr(1, operandStr.find("}") - 1));
@@ -1041,13 +1094,13 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum3 += std::stoi(tmpOpStr.substr(1, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum0);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum0);
       operands[0].access = CS_AC_WRITE;
-      operands[1].reg = static_cast<arm64_reg>(reg_enum1);
+      operands[1].reg = static_cast<aarch64_reg>(reg_enum1);
       operands[1].access = CS_AC_WRITE;
-      operands[2].reg = static_cast<arm64_reg>(reg_enum2);
+      operands[2].reg = static_cast<aarch64_reg>(reg_enum2);
       operands[2].access = CS_AC_WRITE;
-      operands[3].reg = static_cast<arm64_reg>(reg_enum3);
+      operands[3].reg = static_cast<aarch64_reg>(reg_enum3);
       operands[3].access = CS_AC_WRITE;
 
       operands[4].access = CS_AC_READ;
@@ -1073,15 +1126,15 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       // MRS incorrectly flags source/destination as READ | WRITE
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
-      // MRS incorrectly tags ARM64_OP_REG_MRS as ARM64_OP_SYS
-      operands[1].type = ARM64_OP_REG_MRS;
+      // MRS incorrectly tags AARCH64_OP_REG_MRS as AARCH64_OP_SYS
+      operands[1].type = AARCH64_OP_REG_MRS;
       break;
     case Opcode::AArch64_MSR:
       // MSR incorrectly flags source/destination as READ | WRITE
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_READ;
-      // MSR incorrectly tags ARM64_OP_REG_MSR as ARM64_OP_SYS
-      operands[0].type = ARM64_OP_REG_MSR;
+      // MSR incorrectly tags AARCH64_OP_REG_MSR as AARCH64_OP_SYS
+      operands[0].type = AARCH64_OP_REG_MSR;
       break;
     case Opcode::AArch64_PTEST_PP: {
       // PTEST doesn't label access types for operands
@@ -1089,7 +1142,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[1].access = CS_AC_READ;
       // Doesn't identify implicit NZCV destination
       implicitDestinationCount = 1;
-      implicitDestinations[0] = ARM64_REG_NZCV;
+      implicitDestinations[0] = AARCH64_REG_NZCV;
       break;
     }
     case Opcode::AArch64_PTRUE_B:
@@ -1106,8 +1159,8 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       // If no register supplied to RET, default to x30 (LR)
       if (operandCount == 0) {
         operandCount = 1;
-        operands[0].type = ARM64_OP_REG;
-        operands[0].reg = ARM64_REG_LR;
+        operands[0].type = AARCH64_OP_REG;
+        operands[0].reg = AARCH64_REG_LR;
         operands[0].access = CS_AC_READ;
       }
       groupCount = 1;
@@ -1132,13 +1185,13 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[1].access = CS_AC_READ;
       break;
     }
-    case Opcode::AArch64_SST1B_D_REAL:
+    case Opcode::AArch64_SST1B_D:
       [[fallthrough]];
-    case Opcode::AArch64_SST1D_REAL:
+    case Opcode::AArch64_SST1D:
       [[fallthrough]];
-    case Opcode::AArch64_SST1D_SCALED_SCALED_REAL: {
+    case Opcode::AArch64_SST1D_SCALED: {
       // ST1W doesn't correctly identify first source register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
@@ -1146,17 +1199,17 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
       // No defined access types
       operands[0].access = CS_AC_READ;
       operands[1].access = CS_AC_READ;
       // SST1D{_SCALED} gather instruction doesn't correctly identify memory
       // operands
-      operands[2].type = ARM64_OP_MEM;
+      operands[2].type = AARCH64_OP_MEM;
       operands[2].access = CS_AC_READ;
 
       // ST1D doesn't correctly identify vector memory register correctly
-      uint16_t vec_enum = ARM64_REG_Z0;
+      uint16_t vec_enum = AARCH64_REG_Z0;
       std::string tmp_str(operandStr.substr(operandStr.find("[")));
       // Single or double digit Z register identifier
       if (tmp_str.substr(tmp_str.find("z"))[2] == '.') {
@@ -1164,13 +1217,13 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       } else {
         vec_enum += std::stoi(tmp_str.substr(tmp_str.find("z") + 1, 2));
       }
-      operands[2].mem.index = static_cast<arm64_reg>(vec_enum);
+      operands[2].mem.index = static_cast<aarch64_reg>(vec_enum);
       break;
     }
     case Opcode::AArch64_ST2D_IMM: {
       // ST2D doesn't correctly identify destination registers
-      uint16_t reg_enum0 = ARM64_REG_Z0;
-      uint16_t reg_enum1 = ARM64_REG_Z0;
+      uint16_t reg_enum0 = AARCH64_REG_Z0;
+      uint16_t reg_enum1 = AARCH64_REG_Z0;
 
       // tmpOpStr = "zxx.d, zyy.d"
       std::string tmpOpStr(operandStr.substr(1, operandStr.find("}") - 1));
@@ -1193,9 +1246,9 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         tmpOpStr.erase(0, 7);
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum0);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum0);
       operands[0].access = CS_AC_READ;
-      operands[1].reg = static_cast<arm64_reg>(reg_enum1);
+      operands[1].reg = static_cast<aarch64_reg>(reg_enum1);
       operands[1].access = CS_AC_READ;
 
       operands[2].access = CS_AC_READ;
@@ -1210,7 +1263,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       [[fallthrough]];
     case Opcode::AArch64_ST1W_IMM: {
       // ST1W doesn't correctly identify first source register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
@@ -1218,7 +1271,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
       // No defined access types
       operands[0].access = CS_AC_READ;
       operands[1].access = CS_AC_READ;
@@ -1229,7 +1282,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       [[fallthrough]];
     case Opcode::AArch64_ST1W_D: {
       // ST1W doesn't correctly identify first source register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
@@ -1237,7 +1290,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
       // No defined access types
       operands[0].access = CS_AC_READ;
       operands[1].access = CS_AC_READ;
@@ -1252,7 +1305,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     case Opcode::AArch64_SST1W_IMM: {
       // ST1W scatter instruction doesn't correctly identify first source
       // register
-      uint16_t reg_enum = ARM64_REG_Z0;
+      uint16_t reg_enum = AARCH64_REG_Z0;
       // Single or double digit Z register identifier
       if (operandStr[3] == '.') {
         reg_enum += std::stoi(operandStr.substr(2, 1));
@@ -1260,13 +1313,13 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         reg_enum += std::stoi(operandStr.substr(2, 2));
       }
 
-      operands[0].reg = static_cast<arm64_reg>(reg_enum);
+      operands[0].reg = static_cast<aarch64_reg>(reg_enum);
       // No defined access types
       operands[0].access = CS_AC_READ;
       operands[1].access = CS_AC_READ;
       // ST1W scatter instruction doesn't correctly identify second Z reg as
       // memory operand
-      operands[2].type = ARM64_OP_MEM;
+      operands[2].type = AARCH64_OP_MEM;
       operands[2].access = CS_AC_READ;
       // ST1W scatter instruction doesn't recognise memory-offset immediate
       // correctly
@@ -1357,7 +1410,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       break;
     case Opcode::AArch64_SYSxt:
       // No defined metadata.id for SYS instructions
-      id = ARM64_INS_SYS;
+      id = AARCH64_INS_SYS;
       break;
     case Opcode::AArch64_PSEL_PPPRI_B:
       [[fallthrough]];
@@ -1396,7 +1449,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[0].access = CS_AC_READ | CS_AC_WRITE;
       if (operandCount == 1) {
         operandCount = 2;
-        operands[1].type = ARM64_OP_IMM;
+        operands[1].type = AARCH64_OP_IMM;
         operands[1].imm = 1;
       }
       operands[1].access = CS_AC_READ;
@@ -1444,7 +1497,7 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[2].access = CS_AC_READ;
       // Doesn't identify implicit NZCV destination
       implicitDestinationCount = 1;
-      implicitDestinations[0] = ARM64_REG_NZCV;
+      implicitDestinations[0] = AARCH64_REG_NZCV;
       break;
     case Opcode::AArch64_XTNv16i8:
     case Opcode::AArch64_XTNv4i32:
@@ -1573,29 +1626,29 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
           uint8_t tileNum = std::stoi(operandStr.substr((pos + 2), 1));
           switch (type) {
             case 'b':
-              operands[operandCount].reg = ARM64_REG_ZAB0;
+              operands[operandCount].reg = AARCH64_REG_ZAB0;
               break;
             case 'h':
               operands[operandCount].reg =
-                  static_cast<arm64_reg>(ARM64_REG_ZAH0 + tileNum);
+                  static_cast<aarch64_reg>(AARCH64_REG_ZAH0 + tileNum);
               break;
             case 's':
               operands[operandCount].reg =
-                  static_cast<arm64_reg>(ARM64_REG_ZAS0 + tileNum);
+                  static_cast<aarch64_reg>(AARCH64_REG_ZAS0 + tileNum);
               break;
             case 'd':
               operands[operandCount].reg =
-                  static_cast<arm64_reg>(ARM64_REG_ZAD0 + tileNum);
+                  static_cast<aarch64_reg>(AARCH64_REG_ZAD0 + tileNum);
               break;
             case 'q':
               operands[operandCount].reg =
-                  static_cast<arm64_reg>(ARM64_REG_ZAQ0 + tileNum);
+                  static_cast<aarch64_reg>(AARCH64_REG_ZAQ0 + tileNum);
               break;
           }
         } else {
-          operands[operandCount].reg = ARM64_REG_ZA;
+          operands[operandCount].reg = AARCH64_REG_ZA;
         }
-        operands[operandCount].type = ARM64_OP_REG;
+        operands[operandCount].type = AARCH64_OP_REG;
         operands[operandCount].access = CS_AC_WRITE;
         operandCount++;
         pos = operandStr.find("za", pos + 1);
@@ -1609,8 +1662,8 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
 
 InstructionMetadata::InstructionMetadata(const uint8_t* invalidEncoding,
                                          uint8_t bytes)
-    : id(ARM64_INS_INVALID),
-      opcode(Opcode::AArch64_INSTRUCTION_LIST_END),
+    : id(AARCH64_INS_INVALID),
+      opcode(Opcode::INSTRUCTION_LIST_END),
       implicitSourceCount(0),
       implicitDestinationCount(0),
       groupCount(0),
@@ -1627,7 +1680,7 @@ void InstructionMetadata::revertAliasing() {
   // Check mnemonics known to be aliases and see if their opcode matches
   // something else
   switch (id) {
-    case ARM64_INS_ASR:
+    case AARCH64_INS_ASR:
       if (opcode == Opcode::AArch64_ASRVWr ||
           opcode == Opcode::AArch64_ASRVXr) {
         // asr rd, rn, rm; alias for: asrv rd, rn, rm
@@ -1637,7 +1690,7 @@ void InstructionMetadata::revertAliasing() {
           opcode == Opcode::AArch64_SBFMXri) {
         operandCount = 4;
 
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
         if (opcode == Opcode::AArch64_SBFMWri) {
           // 32-bit
@@ -1648,9 +1701,9 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_AT:
+    case AARCH64_INS_AT:
       return aliasNYI();
-    case ARM64_INS_BFI:
+    case AARCH64_INS_BFI:
       if (opcode == Opcode::AArch64_BFMWri) {
         // bfi wd, wn, #lsb, #width; alias for
         // bfm wd, wn, #(-lsb MOD 32), #(width - 1)
@@ -1666,7 +1719,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_BFXIL:
+    case AARCH64_INS_BFXIL:
       if (opcode == Opcode::AArch64_BFMWri ||
           opcode == Opcode::AArch64_BFMXri) {
         // bfxil rd, rn, #lsb, #width; alias for
@@ -1675,13 +1728,13 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_CINC:
+    case AARCH64_INS_CINC:
       if (opcode == Opcode::AArch64_CSINCWr ||
           opcode == Opcode::AArch64_CSINCXr) {
         // cinc rd, rn, cc; alias for: csinc rd, rn, rn, invert(cc)
         operandCount = 3;
 
-        operands[2].type = ARM64_OP_REG;
+        operands[2].type = AARCH64_OP_REG;
         operands[2].access = CS_AC_READ;
         operands[2].reg = operands[1].reg;
 
@@ -1689,29 +1742,29 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_CINV:
+    case AARCH64_INS_CINV:
       return aliasNYI();
-    case ARM64_INS_CMN:
+    case AARCH64_INS_CMN:
       // cmn <operands>, alias for adds <wzr|xzr> <operands>
       operandCount = 3;
       operands[2] = operands[1];
       operands[1] = operands[0];
       operands[1].access = CS_AC_READ;
 
-      operands[0].type = ARM64_OP_REG;
+      operands[0].type = AARCH64_OP_REG;
       operands[0].access = CS_AC_WRITE;
 
       if (opcode == Opcode::AArch64_ADDSXri ||
           opcode == Opcode::AArch64_ADDSXrr ||
           opcode == Opcode::AArch64_ADDSXrs) {
         // 64-bit version
-        operands[0].reg = ARM64_REG_XZR;
+        operands[0].reg = AARCH64_REG_XZR;
       } else {
         // 32-bit version
-        operands[0].reg = ARM64_REG_WZR;
+        operands[0].reg = AARCH64_REG_WZR;
       }
       return;
-    case ARM64_INS_CMP:
+    case AARCH64_INS_CMP:
       if (opcode == Opcode::AArch64_SUBSWri ||
           opcode == Opcode::AArch64_SUBSWrs ||
           opcode == Opcode::AArch64_SUBSWrx ||
@@ -1725,20 +1778,20 @@ void InstructionMetadata::revertAliasing() {
         operands[1] = operands[0];
         operands[1].access = CS_AC_READ;
 
-        operands[0].type = ARM64_OP_REG;
+        operands[0].type = AARCH64_OP_REG;
         operands[0].access = CS_AC_WRITE;
 
         if (opcode == Opcode::AArch64_SUBSWri ||
             opcode == Opcode::AArch64_SUBSWrs ||
             opcode == Opcode::AArch64_SUBSWrx) {
-          operands[0].reg = ARM64_REG_WZR;
+          operands[0].reg = AARCH64_REG_WZR;
         } else {
-          operands[0].reg = ARM64_REG_XZR;
+          operands[0].reg = AARCH64_REG_XZR;
         }
         return;
       }
       return aliasNYI();
-    case ARM64_INS_CNEG:
+    case AARCH64_INS_CNEG:
       if (opcode == Opcode::AArch64_CSNEGWr ||
           opcode == Opcode::AArch64_CSNEGXr) {
         // cneg rd, rn, cc; alias for: csneg rd, rn, rn, invert(cc)
@@ -1748,24 +1801,24 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_CSET:
+    case AARCH64_INS_CSET:
       if (opcode == Opcode::AArch64_CSINCWr ||
           opcode == Opcode::AArch64_CSINCXr) {
         // cset rd, cc; alias for: csinc rd, zr, zr, invert(cc)
         operandCount = 3;
 
-        operands[1].type = ARM64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
         operands[1].access = CS_AC_READ;
 
-        operands[2].type = ARM64_OP_REG;
+        operands[2].type = AARCH64_OP_REG;
         operands[2].access = CS_AC_READ;
 
         if (opcode == Opcode::AArch64_CSINCWr) {
-          operands[1].reg = ARM64_REG_WZR;
-          operands[2].reg = ARM64_REG_WZR;
+          operands[1].reg = AARCH64_REG_WZR;
+          operands[2].reg = AARCH64_REG_WZR;
         } else {
-          operands[1].reg = ARM64_REG_XZR;
-          operands[2].reg = ARM64_REG_XZR;
+          operands[1].reg = AARCH64_REG_XZR;
+          operands[2].reg = AARCH64_REG_XZR;
         }
 
         cc ^= 1;  // invert lowest bit to negate cc
@@ -1773,24 +1826,24 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_CSETM:
+    case AARCH64_INS_CSETM:
       if (opcode == Opcode::AArch64_CSINVWr ||
           opcode == Opcode::AArch64_CSINVXr) {
         // csetm rd, cc; alias for: csinv rd, zr, zr, invert(cc)
         operandCount = 3;
 
-        operands[1].type = ARM64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
         operands[1].access = CS_AC_READ;
 
-        operands[2].type = ARM64_OP_REG;
+        operands[2].type = AARCH64_OP_REG;
         operands[2].access = CS_AC_READ;
 
         if (opcode == Opcode::AArch64_CSINVWr) {
-          operands[1].reg = ARM64_REG_WZR;
-          operands[2].reg = ARM64_REG_WZR;
+          operands[1].reg = AARCH64_REG_WZR;
+          operands[2].reg = AARCH64_REG_WZR;
         } else {
-          operands[1].reg = ARM64_REG_XZR;
-          operands[2].reg = ARM64_REG_XZR;
+          operands[1].reg = AARCH64_REG_XZR;
+          operands[2].reg = AARCH64_REG_XZR;
         }
 
         cc ^= 1;  // invert lowest bit to negate cc
@@ -1798,11 +1851,11 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_DC:
+    case AARCH64_INS_DC:
       return aliasNYI();
-    case ARM64_INS_IC:
+    case AARCH64_INS_IC:
       return aliasNYI();
-    case ARM64_INS_LSL:
+    case AARCH64_INS_LSL:
       if (opcode == Opcode::AArch64_UBFMWri ||
           opcode == Opcode::AArch64_UBFMXri) {
         // lsl rd, rn, #shift; alias for:
@@ -1815,7 +1868,7 @@ void InstructionMetadata::revertAliasing() {
 
         auto shift = operands[2].imm;
         operands[2].imm = (-shift) & highestBit;
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].imm = highestBit - shift;
         operands[3].access = CS_AC_READ;
         return;
@@ -1826,7 +1879,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_LSR:
+    case AARCH64_INS_LSR:
       if (opcode == Opcode::AArch64_LSRVWr ||
           opcode == Opcode::AArch64_LSRVXr) {
         // lsr rd, rn, rm; alias for lsrv rd, rn, rm
@@ -1837,7 +1890,7 @@ void InstructionMetadata::revertAliasing() {
         // lsr rd, rn, #amount; alias for ubfm rd, rn, #amount, #<31|63>
         operandCount = 4;
 
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
 
         if (opcode == Opcode::AArch64_UBFMWri) {
@@ -1848,25 +1901,25 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_MNEG:
+    case AARCH64_INS_MNEG:
       if (opcode == Opcode::AArch64_MSUBXrrr) {
         // mneg xd, xn, xm; alias for msub xd, xn, xm, xzr
         operandCount = 4;
-        operands[3].type = ARM64_OP_REG;
+        operands[3].type = AARCH64_OP_REG;
         operands[3].access = CS_AC_READ;
-        operands[3].reg = ARM64_REG_XZR;
+        operands[3].reg = AARCH64_REG_XZR;
         return;
       }
       if (opcode == Opcode::AArch64_MSUBWrrr) {
         // mneg wd, wn, wm; alias for msub wd, wn, wm, wzr
         operandCount = 4;
-        operands[3].type = ARM64_OP_REG;
+        operands[3].type = AARCH64_OP_REG;
         operands[3].access = CS_AC_READ;
-        operands[3].reg = ARM64_REG_WZR;
+        operands[3].reg = AARCH64_REG_WZR;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_MOV:
+    case AARCH64_INS_MOV:
       if (opcode == Opcode::AArch64_AND_PPzPP) {
         // mov pd.b, pg/z, pn.b; alias for: and pd.b, pg/z, pn.b, pn.b
         operandCount = 4;
@@ -1877,10 +1930,10 @@ void InstructionMetadata::revertAliasing() {
           opcode == Opcode::AArch64_ADDWri) {
         // mov to/from sp; alias for: add <sp|rd>, <rn|sp>, #0
         operandCount = 3;
-        operands[2].type = ARM64_OP_IMM;
+        operands[2].type = AARCH64_OP_IMM;
         operands[2].imm = 0;
         operands[2].access = CS_AC_READ;
-        operands[2].shift.type = ARM64_SFT_INVALID;
+        operands[2].shift.type = AARCH64_SFT_INVALID;
         operands[2].vas = ARM64_VAS_INVALID;
         operands[2].vector_index = -1;
         return;
@@ -1900,7 +1953,7 @@ void InstructionMetadata::revertAliasing() {
         operandCount = 3;
         operands[0].access = CS_AC_WRITE;
         operands[1].access = CS_AC_READ;
-        operands[2].type = ARM64_OP_IMM;
+        operands[2].type = AARCH64_OP_IMM;
         operands[2].access = CS_AC_READ;
 
         // get imm value
@@ -1920,7 +1973,7 @@ void InstructionMetadata::revertAliasing() {
         // mov Zd.T, #imm{, shift}; alias for dup Zd.T, #imm{, shift}
         operandCount = 2;
         operands[0].access = CS_AC_WRITE;
-        operands[1].type = ARM64_OP_IMM;
+        operands[1].type = AARCH64_OP_IMM;
         operands[1].access = CS_AC_READ;
 
         uint8_t start = operandStr[6] == '#' ? 7 : 8;
@@ -2007,8 +2060,8 @@ void InstructionMetadata::revertAliasing() {
         uint8_t start = operandStr[2] == '.' ? 7 : 8;
         uint8_t end = operandStr.length() - start;
 
-        operands[1].reg = static_cast<arm64_reg>(
-            ARM64_REG_Z0 + stoi(operandStr.substr(start, end)));
+        operands[1].reg = static_cast<aarch64_reg>(
+            AARCH64_REG_Z0 + stoi(operandStr.substr(start, end)));
         operands[1].vector_index = 0;
         return;
       }
@@ -2035,14 +2088,14 @@ void InstructionMetadata::revertAliasing() {
         operandCount = 3;
         operands[2] = operands[1];
 
-        operands[1].type = ARM64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_INVALID, 0};
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
         if (opcode == Opcode::AArch64_ORRWri ||
             opcode == Opcode::AArch64_ORRWrs) {
-          operands[1].reg = ARM64_REG_WZR;
+          operands[1].reg = AARCH64_REG_WZR;
         } else {
-          operands[1].reg = ARM64_REG_XZR;
+          operands[1].reg = AARCH64_REG_XZR;
         }
         return;
       }
@@ -2075,7 +2128,7 @@ void InstructionMetadata::revertAliasing() {
           opcode == Opcode::AArch64_SEL_ZPZZ_D) {
         // mov Zd.T, Pg/M, Zn.T; alias for: sel Zd.T, Pg, Zn.T, Zd.T
         if (mnemonic[0] == 'm') {
-          // SEL instructions id sometimes set as ARM64_INS_MOV even if
+          // SEL instructions id sometimes set as AARCH64_INS_MOV even if
           // aliasing hasn't occured so double check mnemoic is MOV alias
           operandCount = 4;
           operands[3] = operands[0];
@@ -2094,14 +2147,14 @@ void InstructionMetadata::revertAliasing() {
           opcode == Opcode::AArch64_MOVZXi) {
         // mov rd, #0; alias for: movz rd, #0{, shift #0}
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_LSL, 0};
+        operands[1].shift = {AARCH64_SFT_LSL, 0};
         return;
       }
       if (opcode == Opcode::AArch64_MOVNWi ||
           opcode == Opcode::AArch64_MOVNXi) {
         // mov rd, #amount; alias for: movn rd, #amount{, shift #0}
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_LSL, 0};
+        operands[1].shift = {AARCH64_SFT_LSL, 0};
         operands[1].imm = ~(operands[1].imm);
         return;
       }
@@ -2118,16 +2171,16 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_MUL:
+    case AARCH64_INS_MUL:
       if (opcode == Opcode::AArch64_MADDXrrr ||
           opcode == Opcode::AArch64_MADDWrrr) {
         operandCount = 4;
-        operands[3].type = ARM64_OP_REG;
+        operands[3].type = AARCH64_OP_REG;
         operands[3].access = CS_AC_READ;
         if (opcode == Opcode::AArch64_MADDWrrr) {
-          operands[3].reg = ARM64_REG_WZR;
+          operands[3].reg = AARCH64_REG_WZR;
         } else {
-          operands[3].reg = ARM64_REG_XZR;
+          operands[3].reg = AARCH64_REG_XZR;
         }
         return;
       }
@@ -2138,20 +2191,20 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_MVN:
+    case AARCH64_INS_MVN:
       if (opcode == Opcode::AArch64_ORNWrs ||
           opcode == Opcode::AArch64_ORNXrs) {
         // mvn rd, rn; alias for: orn rd, zr, rn
         operandCount = 3;
         operands[2] = operands[1];
 
-        operands[1].type = ARM64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
         operands[1].access = CS_AC_READ;
-        operands[1].shift = {ARM64_SFT_INVALID, 0};
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
         if (opcode == Opcode::AArch64_ORNWrs) {
-          operands[1].reg = ARM64_REG_WZR;
+          operands[1].reg = AARCH64_REG_WZR;
         } else {
-          operands[1].reg = ARM64_REG_XZR;
+          operands[1].reg = AARCH64_REG_XZR;
         }
         return;
       }
@@ -2163,7 +2216,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_NEG:
+    case AARCH64_INS_NEG:
       if (opcode == Opcode::AArch64_SUBWrs ||
           opcode == Opcode::AArch64_SUBXrs) {
         // neg rd, rm{, shift #amount}; alias for:
@@ -2171,13 +2224,13 @@ void InstructionMetadata::revertAliasing() {
         operandCount = 3;
         operands[2] = operands[1];
 
-        operands[1].type = ARM64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
         operands[1].access = CS_AC_READ;
 
         if (opcode == Opcode::AArch64_SUBWrs) {
-          operands[1].reg = ARM64_REG_WZR;
+          operands[1].reg = AARCH64_REG_WZR;
         } else {
-          operands[1].reg = ARM64_REG_XZR;
+          operands[1].reg = AARCH64_REG_XZR;
         }
         return;
       }
@@ -2186,7 +2239,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_NEGS:
+    case AARCH64_INS_NEGS:
       if (opcode == Opcode::AArch64_SUBSWrs ||
           opcode == Opcode::AArch64_SUBSXrs) {
         // negs rd, rm{, shift #amount}; alias for:
@@ -2194,22 +2247,22 @@ void InstructionMetadata::revertAliasing() {
         operandCount = 3;
         operands[2] = operands[1];
 
-        operands[1].type = ARM64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
         operands[1].access = CS_AC_READ;
 
         if (opcode == Opcode::AArch64_SUBWrs) {
-          operands[1].reg = ARM64_REG_WZR;
+          operands[1].reg = AARCH64_REG_WZR;
         } else {
-          operands[1].reg = ARM64_REG_XZR;
+          operands[1].reg = AARCH64_REG_XZR;
         }
         return;
       }
       return aliasNYI();
-    case ARM64_INS_NGC:
+    case AARCH64_INS_NGC:
       return aliasNYI();
-    case ARM64_INS_NGCS:
+    case AARCH64_INS_NGCS:
       return aliasNYI();
-    case ARM64_INS_NOT:
+    case AARCH64_INS_NOT:
       if (opcode == Opcode::AArch64_EOR_PPzPP) {
         // not pd.b, pg/z, pn.b; alisas for: eor pd.b, pg/z, pn.b, pg.b
         operandCount = 4;
@@ -2220,7 +2273,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_REV64:
+    case AARCH64_INS_REV64:
       // rev64 vd.t, vn.t
       if (opcode == Opcode::AArch64_REV64v16i8 ||
           opcode == Opcode::AArch64_REV64v2i32 ||
@@ -2234,7 +2287,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_ROR:
+    case AARCH64_INS_ROR:
       if (opcode == Opcode::AArch64_RORVWr ||
           opcode == Opcode::AArch64_RORVXr) {
         // ror wd, wn, wm; alias for : rorv wd, wn, wm
@@ -2254,14 +2307,14 @@ void InstructionMetadata::revertAliasing() {
         operands[1].access = CS_AC_READ;
         operands[2].access = CS_AC_READ;
 
-        operands[0].type = ARM64_OP_REG;
-        operands[1].type = ARM64_OP_REG;
-        operands[2].type = ARM64_OP_REG;
-        operands[3].type = ARM64_OP_IMM;
+        operands[0].type = AARCH64_OP_REG;
+        operands[1].type = AARCH64_OP_REG;
+        operands[2].type = AARCH64_OP_REG;
+        operands[3].type = AARCH64_OP_IMM;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SBFIZ:
+    case AARCH64_INS_SBFIZ:
       if (opcode == Opcode::AArch64_SBFMWri ||
           opcode == Opcode::AArch64_SBFMXri) {
         operands[3].imm -= 1;
@@ -2275,7 +2328,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SBFX:
+    case AARCH64_INS_SBFX:
       if (opcode == Opcode::AArch64_SBFMWri ||
           opcode == Opcode::AArch64_SBFMXri) {
         // sbfx rd, rn, #lsb, #width; alias for
@@ -2284,59 +2337,59 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SMNEGL:
+    case AARCH64_INS_SMNEGL:
       return aliasNYI();
-    case ARM64_INS_SMULL:
+    case AARCH64_INS_SMULL:
       if (opcode == Opcode::AArch64_SMADDLrrr) {
         operandCount = 4;
-        operands[3].type = ARM64_OP_REG;
+        operands[3].type = AARCH64_OP_REG;
         operands[3].access = CS_AC_READ;
-        operands[3].reg = ARM64_REG_XZR;
+        operands[3].reg = AARCH64_REG_XZR;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SXTB:
+    case AARCH64_INS_SXTB:
       // sxtb rd, rn; alias for: sbfm rd, rn, #0, #7
       if (opcode == Opcode::AArch64_SBFMWri ||
           opcode == Opcode::AArch64_SBFMXri) {
         operandCount = 4;
 
-        operands[2].type = ARM64_OP_IMM;
+        operands[2].type = AARCH64_OP_IMM;
         operands[2].access = CS_AC_READ;
         operands[2].imm = 0;
 
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
         operands[3].imm = 7;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SXTH:
+    case AARCH64_INS_SXTH:
       // sxth rd, rn; alias for: sbfm rd, rn, #0, #15
       if (opcode == Opcode::AArch64_SBFMWri ||
           opcode == Opcode::AArch64_SBFMXri) {
         operandCount = 4;
 
-        operands[2].type = ARM64_OP_IMM;
+        operands[2].type = AARCH64_OP_IMM;
         operands[2].access = CS_AC_READ;
         operands[2].imm = 0;
 
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
         operands[3].imm = 15;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SXTW:
+    case AARCH64_INS_SXTW:
       // sxtw rd, rn; alias for: sbfm rd, rn, #0, #31
       if (opcode == Opcode::AArch64_SBFMXri) {
         operandCount = 4;
 
-        operands[2].type = ARM64_OP_IMM;
+        operands[2].type = AARCH64_OP_IMM;
         operands[2].access = CS_AC_READ;
         operands[2].imm = 0;
 
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
         operands[3].imm = 31;
         return;
@@ -2345,17 +2398,17 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_SYS: {
+    case AARCH64_INS_SYS: {
       // Extract IC/DC/AT/TLBI operation
       if (std::string(mnemonic) == "dc") {
         if (operandStr.substr(0, 3) == "zva") {
-          id = ARM64_INS_DC;
+          id = AARCH64_INS_DC;
           operandCount = 3;
           operands[1] = operands[0];
           operands[1].access = CS_AC_READ;
-          operands[0].type = ARM64_OP_SYS;
-          operands[0].sys = ARM64_DC_ZVA;
-          operands[2].type = ARM64_OP_REG_MRS;
+          operands[0].type = static_cast<aarch64_op_type>(AARCH64_OP_SYS);
+          // operands[0].sys = ARM64_DC_ZVA; // .sys field removed in new Capstone
+          operands[2].type = AARCH64_OP_REG_MRS;
           operands[2].access = CS_AC_READ;
           operands[2].imm = ARM64_SYSREG_DCZID_EL0;
           return;
@@ -2363,9 +2416,9 @@ void InstructionMetadata::revertAliasing() {
       }
       return aliasNYI();
     }
-    case ARM64_INS_TLBI:
+    case AARCH64_INS_TLBI:
       return aliasNYI();
-    case ARM64_INS_TST:
+    case AARCH64_INS_TST:
       if (opcode == Opcode::AArch64_ANDSWrs ||
           opcode == Opcode::AArch64_ANDSXrs ||
           opcode == Opcode::AArch64_ANDSWri ||
@@ -2377,18 +2430,18 @@ void InstructionMetadata::revertAliasing() {
         operands[1] = operands[0];
         operands[1].access = CS_AC_READ;
 
-        operands[0].type = ARM64_OP_REG;
+        operands[0].type = AARCH64_OP_REG;
         operands[0].access = CS_AC_WRITE;
         if (opcode == Opcode::AArch64_ANDSWrs ||
             opcode == Opcode::AArch64_ANDSWri) {
-          operands[0].reg = ARM64_REG_WZR;
+          operands[0].reg = AARCH64_REG_WZR;
         } else {
-          operands[0].reg = ARM64_REG_XZR;
+          operands[0].reg = AARCH64_REG_XZR;
         }
         return;
       }
       return aliasNYI();
-    case ARM64_INS_UBFIZ:
+    case AARCH64_INS_UBFIZ:
       if (opcode == Opcode::AArch64_UBFMWri ||
           opcode == Opcode::AArch64_UBFMXri) {
         operands[3].imm -= 1;
@@ -2402,7 +2455,7 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_UBFX:
+    case AARCH64_INS_UBFX:
       if (opcode == Opcode::AArch64_UBFMWri ||
           opcode == Opcode::AArch64_UBFMXri) {
         // ubfx rd, rn, #lsb, #width; alias for
@@ -2411,37 +2464,37 @@ void InstructionMetadata::revertAliasing() {
         return;
       }
       return aliasNYI();
-    case ARM64_INS_UMNEGL:
+    case AARCH64_INS_UMNEGL:
       return aliasNYI();
-    case ARM64_INS_UMULL:
+    case AARCH64_INS_UMULL:
       // umull xd, wn, wm; alias for: umaddl xd, wn, wm, xzr
       if (opcode == Opcode::AArch64_UMADDLrrr) {
         operandCount = 4;
-        operands[3].type = ARM64_OP_REG;
+        operands[3].type = AARCH64_OP_REG;
         operands[3].access = CS_AC_READ;
-        operands[3].reg = ARM64_REG_XZR;
+        operands[3].reg = AARCH64_REG_XZR;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_UXTB:
+    case AARCH64_INS_UXTB:
       // uxtb wd, wn; alias for: ubfm wd, wn, #0, #7
       if (opcode == Opcode::AArch64_UBFMWri) {
         operandCount = 4;
-        operands[2].type = ARM64_OP_IMM;
+        operands[2].type = AARCH64_OP_IMM;
         operands[2].access = CS_AC_READ;
         operands[2].imm = 0;
-        operands[3].type = ARM64_OP_IMM;
+        operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
         operands[3].imm = 7;
         return;
       }
       return aliasNYI();
-    case ARM64_INS_UXTH:
+    case AARCH64_INS_UXTH:
       return aliasNYI();
   }
 }
 
-void InstructionMetadata::aliasNYI() { id = ARM64_INS_INVALID; }
+void InstructionMetadata::aliasNYI() { id = AARCH64_INS_INVALID; }
 
 }  // namespace aarch64
 }  // namespace arch

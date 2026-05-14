@@ -98,7 +98,7 @@ class Architecture : public arch::Architecture {
   /** A decoding metadata cache, mapping an instruction word to a previously
    * decoded instruction metadata bundle. Metadata is added to the cache as it's
    * decoded, to reduce the overhead of future decoding. */
-  static std::forward_list<InstructionMetadata> metadataCache;
+  static std::forward_list<std::shared_ptr<InstructionMetadata>> metadataCache;
 
   /** A copy of the value of the SVCR system register. */
   mutable uint64_t SVCRval_ = 0;

@@ -12,9 +12,10 @@ const Register Instruction::ZERO_REGISTER = {
     RegisterType::GENERAL, (uint16_t)-1};
 
 Instruction::Instruction(
-    const Architecture& architecture, const InstructionMetadata& metadata,
+    const Architecture& architecture,
+    std::shared_ptr<const InstructionMetadata> metadata,
     MicroOpInfo microOpInfo)
-    : architecture_(architecture), metadata(metadata) {
+    : architecture_(architecture), metadata_ptr(metadata), metadata(*metadata_ptr) {
   isMicroOp_ = microOpInfo.isMicroOp;
   microOpcode_ = microOpInfo.microOpcode;
   dataSize_ = microOpInfo.dataSize;
@@ -24,11 +25,69 @@ Instruction::Instruction(
 }
 
 Instruction::Instruction(
-    const Architecture& architecture, const InstructionMetadata& metadata,
+    const Architecture& architecture,
+    std::shared_ptr<const InstructionMetadata> metadata,
     InstructionException exception)
-    : architecture_(architecture), metadata(metadata) {
+    : architecture_(architecture), metadata_ptr(metadata), metadata(*metadata_ptr) {
   exception_ = exception;
   exceptionEncountered_ = true;
+}
+
+Instruction::Instruction(const Instruction& other)
+    : architecture_(other.architecture_),
+      metadata_ptr(other.metadata_ptr),
+      metadata(*metadata_ptr) {
+  sourceRegisters = other.sourceRegisters;
+  sourceRegisterCount = other.sourceRegisterCount;
+  destinationRegisters = other.destinationRegisters;
+  destinationRegisterCount = other.destinationRegisterCount;
+  operands = other.operands;
+  results = other.results;
+  exception_ = other.exception_;
+  exceptionEncountered_ = other.exceptionEncountered_;
+  isScalarData_ = other.isScalarData_;
+  isVectorData_ = other.isVectorData_;
+  isSVEData_ = other.isSVEData_;
+  isSMEData_ = other.isSMEData_;
+  isNoShift_ = other.isNoShift_;
+  isLogical_ = other.isLogical_;
+  isCompare_ = other.isCompare_;
+  isConvert_ = other.isConvert_;
+  isMultiply_ = other.isMultiply_;
+  isDivideOrSqrt_ = other.isDivideOrSqrt_;
+  isPredicate_ = other.isPredicate_;
+  isLoad_ = other.isLoad_;
+  isStoreAddress_ = other.isStoreAddress_;
+  isStoreData_ = other.isStoreData_;
+  isBranch_ = other.isBranch_;
+  microOpcode_ = other.microOpcode_;
+  dataSize_ = other.dataSize_;
+  memoryAddresses = other.memoryAddresses;
+  memoryData = other.memoryData;
+
+  // Copy base class members
+  instructionAddress_ = other.instructionAddress_;
+  sequenceId_ = other.sequenceId_;
+  instructionId_ = other.instructionId_;
+  executed_ = other.executed_;
+  latency_ = other.latency_;
+  lsqExecutionLatency_ = other.lsqExecutionLatency_;
+  stallCycles_ = other.stallCycles_;
+  supportedPorts_ = other.supportedPorts_;
+  canCommit_ = other.canCommit_;
+  memoryAddresses_ = other.memoryAddresses_;
+  memoryData_ = other.memoryData_;
+  dataPending_ = other.dataPending_;
+  prediction_ = other.prediction_;
+  branchAddress_ = other.branchAddress_;
+  branchTaken_ = other.branchTaken_;
+  branchType_ = other.branchType_;
+  knownOffset_ = other.knownOffset_;
+  flushed_ = other.flushed_;
+  isMicroOp_ = other.isMicroOp_;
+  isLastMicroOp_ = other.isLastMicroOp_;
+  waitingCommit_ = other.waitingCommit_;
+  microOpIndex_ = other.microOpIndex_;
 }
 
 void Instruction::print() const {
@@ -37,8 +96,11 @@ void Instruction::print() const {
 
 InstructionException Instruction::getException() const { return exception_; }
 
-const span<Register> Instruction::getOperandRegisters() const {
+const span<Register> Instruction::getSourceRegisters() const {
   return {const_cast<Register*>(sourceRegisters.data()), sourceRegisterCount};
+}
+const span<RegisterValue> Instruction::getSourceOperands() const {
+  return {const_cast<RegisterValue*>(operands.data()), sourceRegisterCount};
 }
 const span<Register> Instruction::getDestinationRegisters() const {
   return {
@@ -49,14 +111,14 @@ bool Instruction::isOperandReady(int index) const {
   return static_cast<bool>(operands[index]);
 }
 
-void Instruction::renameSource(uint8_t i, Register renamed) {
+void Instruction::renameSource(uint16_t i, Register renamed) {
   sourceRegisters[i] = renamed;
 }
-void Instruction::renameDestination(uint8_t i, Register renamed) {
+void Instruction::renameDestination(uint16_t i, Register renamed) {
   destinationRegisters[i] = renamed;
 }
 
-void Instruction::supplyOperand(uint8_t i, const RegisterValue& value) {
+void Instruction::supplyOperand(uint16_t i, const RegisterValue& value) {
   assert(
       !canExecute() &&
       "Attempted to provide an operand to a ready-to-execute instruction");
@@ -103,20 +165,20 @@ bool Instruction::isLoad() const { return isLoad_; }
 bool Instruction::isBranch() const { return isBranch_; }
 
 void Instruction::setMemoryAddresses(
-    const std::vector<MemoryAccessTarget>& addresses) {
+    const std::vector<memory::MemoryAccessTarget>& addresses) {
   memoryData.resize(addresses.size());
   memoryAddresses = addresses;
   dataPending_ = addresses.size();
 }
 
 void Instruction::setMemoryAddresses(
-    std::vector<MemoryAccessTarget>&& addresses) {
+    std::vector<memory::MemoryAccessTarget>&& addresses) {
   dataPending_ = addresses.size();
   memoryData.resize(addresses.size());
   memoryAddresses = std::move(addresses);
 }
 
-span<const MemoryAccessTarget> Instruction::getGeneratedAddresses() const {
+span<const memory::MemoryAccessTarget> Instruction::getGeneratedAddresses() const {
   return {memoryAddresses.data(), memoryAddresses.size()};
 }
 
@@ -128,7 +190,7 @@ std::tuple<bool, uint64_t> Instruction::checkEarlyBranchMisprediction() const {
   if (!isBranch()) {
     // Instruction isn't a branch; if predicted as taken, it will require a
     // flush
-    return {prediction_.taken, instructionAddress_ + 4};
+    return {prediction_.isTaken, instructionAddress_ + 4};
   }
 
   // Not enough information to determine this was a misprediction
@@ -187,6 +249,9 @@ const std::vector<uint16_t>& Instruction::getSupportedPorts() {
 }
 
 const InstructionMetadata& Instruction::getMetadata() const { return metadata; }
+std::shared_ptr<const InstructionMetadata> Instruction::getMetadataPtr() const {
+  return metadata_ptr;
+}
 
 const Architecture& Instruction::getArchitecture() const {
   return architecture_;
@@ -196,7 +261,7 @@ const Architecture& Instruction::getArchitecture() const {
  * `shift` */
 uint64_t Instruction::extendValue(
     uint64_t value, uint8_t extendType, uint8_t shift) const {
-  if (extendType == ARM64_EXT_INVALID && shift == 0) {
+  if (extendType == AARCH64_EXT_INVALID && shift == 0) {
     // Special case: an invalid shift type with a shift amount of 0 implies an
     // identity operation
     return value;
@@ -204,28 +269,28 @@ uint64_t Instruction::extendValue(
 
   uint64_t extended;
   switch (extendType) {
-    case ARM64_EXT_UXTB:
+    case AARCH64_EXT_UXTB:
       extended = static_cast<uint8_t>(value);
       break;
-    case ARM64_EXT_UXTH:
+    case AARCH64_EXT_UXTH:
       extended = static_cast<uint16_t>(value);
       break;
-    case ARM64_EXT_UXTW:
+    case AARCH64_EXT_UXTW:
       extended = static_cast<uint32_t>(value);
       break;
-    case ARM64_EXT_UXTX:
+    case AARCH64_EXT_UXTX:
       extended = value;
       break;
-    case ARM64_EXT_SXTB:
+    case AARCH64_EXT_SXTB:
       extended = static_cast<int8_t>(value);
       break;
-    case ARM64_EXT_SXTH:
+    case AARCH64_EXT_SXTH:
       extended = static_cast<int16_t>(value);
       break;
-    case ARM64_EXT_SXTW:
+    case AARCH64_EXT_SXTW:
       extended = static_cast<int32_t>(value);
       break;
-    case ARM64_EXT_SXTX:
+    case AARCH64_EXT_SXTX:
       extended = value;
       break;
     default:
@@ -244,7 +309,7 @@ uint64_t Instruction::extendOffset(
       return value;
     }
     if (op.shift.type == 1) {
-      return extendValue(value, ARM64_EXT_UXTX, op.shift.value);
+      return extendValue(value, AARCH64_EXT_UXTX, op.shift.value);
     }
   }
   return extendValue(value, op.ext, op.shift.value);

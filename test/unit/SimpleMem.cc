@@ -53,4 +53,4 @@ TEST(SimpleMemTest, Write) {
   }
 }
 
-};  // namespace
+}  // namespace

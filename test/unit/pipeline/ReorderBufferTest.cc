@@ -36,7 +36,8 @@ class ReorderBufferTest : public testing::Test {
         reorderBuffer(
             maxROBSize, rat, lsq,
             [this](auto insn) { exceptionHandler.raiseException(insn); },
-            predictor) {}
+            [this](auto addr) { loopBoundaryAddr = addr; }, predictor, 32,
+            2) {}
 
  protected:
   const uint8_t maxLSQLoads = 32;

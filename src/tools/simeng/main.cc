@@ -36,12 +36,16 @@ int simulate(simeng::OS::SimOS& simOS, simeng::Core& core,
   // Tick the core and memory interfaces until the program has halted
   while (!simOS.hasHalted() || dataMemory.hasPendingRequests()) {
     // Tick SimOS
-    simOS.tick();  // TEMP to test scheduling works
+    std::cout << "  Ticking SimOS..." << std::endl;
+    simOS.tick();
 
     // Tick the core
+    std::cout << "Cycle " << iterations << " | PC: 0x" << std::hex << core.getCurrentContext().pc << std::dec << std::endl;
+    std::cout << "  Ticking Core..." << std::endl;
     core.tick();
 
     // Tick memory
+    std::cout << "  Ticking Memory..." << std::endl;
     instructionMemory.tick();
     dataMemory.tick();
 
@@ -69,7 +73,9 @@ int main(int argc, char** argv) {
   // Determine if a config file has been supplied.
   if (argc > 1) {
     // Set global config file to one at file path defined
+    std::cout << "[SimEng] Loading config: " << argv[1] << std::endl;
     Config::set(std::string(argv[1]));
+    std::cout << "[SimEng] Config loaded." << std::endl;
 
     // Determine if an executable has been supplied
     if (argc > 2) {
@@ -92,7 +98,9 @@ int main(int argc, char** argv) {
       std::make_shared<simeng::memory::SimpleMem>(memorySize);
 
   // Create the instance of the lightweight Operating system
+  std::cout << "[SimEng] Creating SimOS..." << std::endl;
   simeng::OS::SimOS OS = simOsFactory(memory, executablePath, executableArgs);
+  std::cout << "[SimEng] SimOS created." << std::endl;
 
   // Retrieve the virtual address translation function from SimOS and pass it to
   // the MMU. This function will be used to handle all virtual address

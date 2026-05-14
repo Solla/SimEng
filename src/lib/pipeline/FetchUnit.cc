@@ -42,6 +42,7 @@ void FetchUnit::tick() {
                                       loopBuffer_.front().address, macroOp);
 
       assert(bytesRead != 0 && "predecode failure for loop buffer entry");
+      (void)bytesRead;
 
       // Set prediction to recorded value during loop buffer filling
       if (macroOp[0]->isBranch()) {
@@ -153,7 +154,7 @@ void FetchUnit::tick() {
 
       if (pc_ == loopBoundaryAddress_) {
         if (macroOp[0]->isBranch() &&
-            !macroOp[0]->getBranchPrediction().taken) {
+            !macroOp[0]->getBranchPrediction().isTaken) {
           // loopBoundaryAddress_ has been fetched whilst filling the loop
           // buffer BUT this is a branch, predicted to branch out of the loop
           // being buffered. Stop filling the loop buffer and don't supply to
@@ -180,7 +181,7 @@ void FetchUnit::tick() {
     bufferOffset += bytesRead;
     bufferedBytes_ -= bytesRead;
 
-    if (!prediction.taken) {
+    if (!prediction.isTaken) {
       // Predicted as not taken; increment PC to next instruction
       pc_ += bytesRead;
     } else {
@@ -193,7 +194,7 @@ void FetchUnit::tick() {
       break;
     }
 
-    if (prediction.taken) {
+    if (prediction.isTaken) {
       if (slot + 1 < output_.getWidth()) {
         branchStalls_++;
       }

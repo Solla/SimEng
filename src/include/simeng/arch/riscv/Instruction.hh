@@ -84,11 +84,11 @@ class Instruction : public simeng::Instruction {
   /** Construct an instruction instance by decoding a provided instruction word.
    */
   Instruction(const Architecture& architecture,
-              const InstructionMetadata& metadata);
+              std::shared_ptr<const InstructionMetadata> metadata);
 
   /** Construct an instruction instance that raises an exception. */
   Instruction(const Architecture& architecture,
-              const InstructionMetadata& metadata,
+              std::shared_ptr<const InstructionMetadata> metadata,
               InstructionException exception);
 
   /** Retrieve the source registers this instruction reads. */
@@ -172,6 +172,10 @@ class Instruction : public simeng::Instruction {
   /** Retrieve the instruction's metadata. */
   const InstructionMetadata& getMetadata() const;
 
+  /** Retrieve the shared pointer to the metadata associated with this
+   * instruction. */
+  std::shared_ptr<const InstructionMetadata> getMetadataPtr() const;
+
   /** Retrieve the instruction's associated architecture. */
   const Architecture& getArchitecture() const;
 
@@ -209,7 +213,7 @@ class Instruction : public simeng::Instruction {
   const Architecture& architecture_;
 
   /** A reference to the decoding metadata for this instruction. */
-  const InstructionMetadata& metadata_;
+  std::shared_ptr<const InstructionMetadata> metadata_;
 
   /** An array of source registers. */
   std::array<Register, MAX_SOURCE_REGISTERS> sourceRegisters_;

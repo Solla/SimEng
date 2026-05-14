@@ -47,7 +47,9 @@ class ReorderBuffer {
   ReorderBuffer(
       uint32_t maxSize, RegisterAliasTable& rat, LoadStoreQueue& lsq,
       std::function<void(const std::shared_ptr<Instruction>&)> raiseException,
-      BranchPredictor& predictor);
+      std::function<void(uint64_t branchAddress)> sendLoopBoundary,
+      BranchPredictor& predictor, uint16_t loopBufSize,
+      uint16_t loopDetectionThreshold);
 
   /** Add the provided instruction to the ROB. */
   void reserve(const std::shared_ptr<Instruction>& insn);
@@ -143,6 +145,22 @@ class ReorderBuffer {
 
   /** The number of retired branch instructions */
   uint64_t retiredBranches_ = 0;
+
+  /** A function to call to register a loop boundary. */
+  std::function<void(uint64_t branchAddress)> sendLoopBoundary_;
+
+  /** The size of the loop buffer. */
+  uint16_t loopBufSize_;
+
+  /** The number of times a branch must be sequentially retired to be
+   * identified as a loop boundary. */
+  uint16_t loopDetectionThreshold_;
+
+  /** Whether a loop has been detected. */
+  bool loopDetected_ = false;
+
+  /** A counter to track sequentially retired branches. */
+  std::pair<latestBranch, uint16_t> branchCounter_ = {{0, {false, 0}, 0}, 0};
 };
 
 }  // namespace pipeline

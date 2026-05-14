@@ -2,13 +2,15 @@
 #include <cassert>
 
 #include "InstructionMetadata.hh"
+#include "simeng/config/SimInfo.hh"
+#include "simeng/config/yaml/ryml.hh"
 
 namespace simeng {
 namespace arch {
 namespace aarch64 {
 
 std::unordered_map<uint32_t, Instruction> Architecture::decodeCache;
-std::forward_list<InstructionMetadata> Architecture::metadataCache;
+std::forward_list<std::shared_ptr<InstructionMetadata>> Architecture::metadataCache;
 
 Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
   if (cs_open(CS_ARCH_ARM64, CS_MODE_ARM, &capstoneHandle) != CS_ERR_OK) {
@@ -20,12 +22,12 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
   cs_option(capstoneHandle, CS_OPT_DETAIL, CS_OPT_ON);
 
   // Initialise SVE and SME vector lengths
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   VL_ = config["Core"]["Vector-Length"].as<uint64_t>();
   SVL_ = config["Core"]["Streaming-Vector-Length"].as<uint64_t>();
   // Initialise virtual counter timer increment frequency
-  vctModulo_ = (config["Core"]["Clock-Frequency"].as<float>() * 1e9) /
-               (config["Core"]["Timer-Frequency"].as<uint32_t>() * 1e6);
+  vctModulo_ = (config["Core"]["Clock-Frequency-GHz"].as<float>() * 1e9) /
+               (config["Core"]["Timer-Frequency-MHz"].as<uint32_t>() * 1e6);
 
   // Initialise systemRegisterMap_ such that relevant values in Capstone's
   // arm64_sysreg enum are mapped to SimEng's ARM64_SYSREG_TAGS enum.
@@ -53,12 +55,12 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
   }
   // Extract execution latency/throughput for each group
   std::vector<uint8_t> inheritanceDistance(NUM_GROUPS, UINT8_MAX);
-  for (size_t i = 0; i < config["Latencies"].size(); i++) {
-    YAML::Node port_node = config["Latencies"][i];
+  for (size_t i = 0; i < config["Latencies"].num_children(); i++) {
+    ryml::ConstNodeRef port_node = config["Latencies"][i];
     uint16_t latency = port_node["Execution-Latency"].as<uint16_t>();
     uint16_t throughput = port_node["Execution-Throughput"].as<uint16_t>();
-    for (size_t j = 0; j < port_node["Instruction-Group"].size(); j++) {
-      uint16_t group = port_node["Instruction-Group"][j].as<uint16_t>();
+    for (size_t j = 0; j < port_node["Instruction-Group-Nums"].num_children(); j++) {
+      uint16_t group = port_node["Instruction-Group-Nums"][j].as<uint16_t>();
       groupExecutionInfo_[group].latency = latency;
       groupExecutionInfo_[group].stallCycles = throughput;
       // Set zero inheritance distance for latency assignment as it's explicitly
@@ -71,9 +73,9 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
       uint8_t distance = 1;
       while (groups.size()) {
         // Determine if there's any inheritance
-        if (groupInheritance.find(groups.front()) != groupInheritance.end()) {
+        if (groupInheritance_.find(groups.front()) != groupInheritance_.end()) {
           std::vector<uint16_t> inheritedGroups =
-              groupInheritance.at(groups.front());
+              groupInheritance_.at(groups.front());
           for (int k = 0; k < inheritedGroups.size(); k++) {
             // Determine if this group has inherited latency values from a
             // smaller distance
@@ -90,8 +92,8 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
       }
     }
     // Store any opcode-based latency override
-    for (size_t j = 0; j < port_node["Instruction-Opcode"].size(); j++) {
-      uint16_t opcode = port_node["Instruction-Opcode"][j].as<uint16_t>();
+    for (size_t j = 0; j < port_node["Instruction-Opcodes"].num_children(); j++) {
+      uint16_t opcode = port_node["Instruction-Opcodes"][j].as<uint16_t>();
       opcodeExecutionInfo_[opcode].latency = latency;
       opcodeExecutionInfo_[opcode].stallCycles = throughput;
     }
@@ -102,10 +104,10 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
   if (config["Core"]["Simulation-Mode"].as<std::string>() == "outoforder") {
     // Create mapping between instructions groups and the ports that support
     // them
-    for (size_t i = 0; i < config["Ports"].size(); i++) {
+    for (size_t i = 0; i < config["Ports"].num_children(); i++) {
       // Store which ports support which groups
-      YAML::Node group_node = config["Ports"][i]["Instruction-Group-Support"];
-      for (size_t j = 0; j < group_node.size(); j++) {
+      ryml::ConstNodeRef group_node = config["Ports"][i]["Instruction-Group-Support-Nums"];
+      for (size_t j = 0; j < group_node.num_children(); j++) {
         uint16_t group = group_node[j].as<uint16_t>();
         uint8_t newPort = static_cast<uint8_t>(i);
         groupExecutionInfo_[group].ports.push_back(newPort);
@@ -114,9 +116,9 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
         groups.push(group);
         while (groups.size()) {
           // Determine if there's any inheritance
-          if (groupInheritance.find(groups.front()) != groupInheritance.end()) {
+          if (groupInheritance_.find(groups.front()) != groupInheritance_.end()) {
             std::vector<uint16_t> inheritedGroups =
-                groupInheritance.at(groups.front());
+                groupInheritance_.at(groups.front());
             for (int k = 0; k < inheritedGroups.size(); k++) {
               groupExecutionInfo_[inheritedGroups[k]].ports.push_back(newPort);
               groups.push(inheritedGroups[k]);
@@ -126,8 +128,8 @@ Architecture::Architecture() : microDecoder_(std::make_unique<MicroDecoder>()) {
         }
       }
       // Store any opcode-based port support override
-      YAML::Node opcode_node = config["Ports"][i]["Instruction-Opcode-Support"];
-      for (size_t j = 0; j < opcode_node.size(); j++) {
+      ryml::ConstNodeRef opcode_node = config["Ports"][i]["Instruction-Opcode-Support"];
+      for (size_t j = 0; j < opcode_node.num_children(); j++) {
         // If latency information hasn't been defined, set to zero as to inform
         // later access to use group defined latencies instead
         uint16_t opcode = opcode_node[j].as<uint16_t>();
@@ -151,7 +153,7 @@ uint8_t Architecture::predecode(const void* ptr, uint8_t bytesAvailable,
   // Check that instruction address is 4-byte aligned as required by Armv9.2-a
   if (instructionAddress & 0x3) {
     // Consume 1-byte and raise a misaligned PC exception
-    auto metadata = InstructionMetadata((uint8_t*)ptr, 1);
+    auto metadata = std::make_shared<InstructionMetadata>((uint8_t*)ptr, 1);
     metadataCache.emplace_front(metadata);
     output.resize(1);
     auto& uop = output[0];
@@ -186,8 +188,9 @@ uint8_t Architecture::predecode(const void* ptr, uint8_t bytesAvailable,
     bool success =
         cs_disasm_iter(capstoneHandle, &encoding, &size, &address, &rawInsn);
 
-    auto metadata =
-        success ? InstructionMetadata(rawInsn) : InstructionMetadata(encoding);
+    auto metadata = success
+                        ? std::make_shared<InstructionMetadata>(rawInsn)
+                        : std::make_shared<InstructionMetadata>(encoding);
 
     // Cache the metadata
     metadataCache.push_front(metadata);
@@ -272,7 +275,7 @@ void Architecture::updateSystemTimerRegisters(RegisterFileSet* regFile,
 
 std::vector<RegisterFileStructure>
 Architecture::getConfigPhysicalRegisterStructure() const {
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   // Matrix-Count multiplied by (SVL/8) as internal representation of
   // ZA is a block of row-vector-registers. Therefore we need to
   // convert physical counts from whole-ZA to rows-in-ZA.
@@ -290,7 +293,7 @@ Architecture::getConfigPhysicalRegisterStructure() const {
 
 std::vector<uint16_t> Architecture::getConfigPhysicalRegisterQuantities()
     const {
-  YAML::Node& config = Config::get();
+  ryml::ConstNodeRef config = config::SimInfo::getConfig();
   // Matrix-Count multiplied by (SVL/8) as internal representation of
   // ZA is a block of row-vector-registers. Therefore we need to convert
   // physical counts from whole-ZA to rows-in-ZA.

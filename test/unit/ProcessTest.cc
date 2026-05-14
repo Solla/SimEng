@@ -1,5 +1,7 @@
 #include "ConfigInit.hh"
 #include "gtest/gtest.h"
+#include "simeng/OS/Process.hh"
+#include "simeng/kernel/Linux.hh"
 #include "simeng/kernel/LinuxProcess.hh"
 #include "simeng/version.hh"
 
@@ -29,17 +31,19 @@ class ProcessTest : public testing::Test {
       0xD2800BC8,  // mov x8, #94
       0xD4000001,  // svc #0
   };
+
+  kernel::Linux os = kernel::Linux(config::SimInfo::getConfig());
 };
 
 TEST_F(ProcessTest, alignToBoundary) {
-  EXPECT_EQ(kernel::alignToBoundary(63, 64), 64);
-  EXPECT_EQ(kernel::alignToBoundary(1, 64), 64);
-  EXPECT_EQ(kernel::alignToBoundary(65, 64), 128);
+  EXPECT_EQ(OS::alignToBoundary(63, 64), 64);
+  EXPECT_EQ(OS::alignToBoundary(1, 64), 64);
+  EXPECT_EQ(OS::alignToBoundary(65, 64), 128);
 }
 
 // Tests createProcess(), isValid(), and getPath() functions.
 TEST_F(ProcessTest, createProcess_elf) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
+  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine, os);
   EXPECT_TRUE(proc.isValid());
   EXPECT_EQ(proc.getPath(),
             SIMENG_SOURCE_DIR "/test/unit/data/stream-aarch64.elf");
@@ -48,14 +52,14 @@ TEST_F(ProcessTest, createProcess_elf) {
 // Tests createProcess(), isValid(), and getPath() functions.
 TEST_F(ProcessTest, createProcess_hex) {
   kernel::LinuxProcess proc = kernel::LinuxProcess(
-      span(reinterpret_cast<const uint8_t*>(demoHex), sizeof(demoHex)));
+      span(reinterpret_cast<const uint8_t*>(demoHex), sizeof(demoHex)), os);
   EXPECT_TRUE(proc.isValid());
   EXPECT_EQ(proc.getPath(), SIMENG_SOURCE_DIR "/SimEngDefaultProgram\0");
 }
 
 // Tests get{Heap, Stack, Mmap}Start() functions
 TEST_F(ProcessTest, get_x_Start) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
+  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine, os);
   EXPECT_TRUE(proc.isValid());
   const uint64_t heapStart = 5040480;
   uint64_t heapSize =
@@ -65,37 +69,34 @@ TEST_F(ProcessTest, get_x_Start) {
           .as<uint64_t>();
   EXPECT_EQ(proc.getHeapStart(), heapStart);
   EXPECT_EQ(proc.getMmapStart(),
-            kernel::alignToBoundary(heapStart + ((heapSize + stackSize) / 2),
+            OS::alignToBoundary(heapStart + ((heapSize + stackSize) / 2),
                                     proc.getPageSize()));
   EXPECT_EQ(proc.getStackStart(), heapStart + heapSize + stackSize);
 }
 
 TEST_F(ProcessTest, getPageSize) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
+  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine, os);
   EXPECT_TRUE(proc.isValid());
   EXPECT_EQ(proc.getPageSize(), 4096);
 }
 
-TEST_F(ProcessTest, getProcessImage) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
-  EXPECT_TRUE(proc.isValid());
-  EXPECT_NE(proc.getProcessImage(), nullptr);
+// getProcessImage/getProcessImageSize removed from LinuxProcess API
+TEST_F(ProcessTest, DISABLED_getProcessImage) {
+  GTEST_SKIP() << "getProcessImage() removed from LinuxProcess API";
 }
 
-TEST_F(ProcessTest, getProcessImageSize) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
-  EXPECT_TRUE(proc.isValid());
-  EXPECT_EQ(proc.getProcessImageSize(), 1079830880);
+TEST_F(ProcessTest, DISABLED_getProcessImageSize) {
+  GTEST_SKIP() << "getProcessImageSize() removed from LinuxProcess API";
 }
 
 TEST_F(ProcessTest, getEntryPoint) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
+  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine, os);
   EXPECT_TRUE(proc.isValid());
   EXPECT_EQ(proc.getEntryPoint(), 4206008);
 }
 
 TEST_F(ProcessTest, getInitialStackPointer) {
-  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine);
+  kernel::LinuxProcess proc = kernel::LinuxProcess(cmdLine, os);
   EXPECT_TRUE(proc.isValid());
   // cmdLine[0] length will change depending on the host system so final stack
   // pointer needs to be calculated manually
@@ -108,8 +109,8 @@ TEST_F(ProcessTest, getInitialStackPointer) {
   // cmd + Env needs +1 for null seperator
   const uint64_t stackPointer =
       proc.getStackStart() -
-      kernel::alignToBoundary(cmdLineSize + envStringsSize + 1, 32) -
-      kernel::alignToBoundary(stackFrameSize, 32);
+      OS::alignToBoundary(cmdLineSize + envStringsSize + 1, 32) -
+      OS::alignToBoundary(stackFrameSize, 32);
   EXPECT_EQ(proc.getInitialStackPointer(), stackPointer);
 }
 

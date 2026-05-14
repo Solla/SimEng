@@ -109,11 +109,13 @@ void Core::tick() {
     pc_ += bytesRead;
 
     // Decode
+    std::cout << "  Core: pushing uops..." << std::endl;
     for (size_t index = 0; index < macroOp_.size(); index++) {
       microOps_.push(std::move(macroOp_[index]));
     }
   }
 
+  std::cout << "  Core: getting front uop..." << std::endl;
   auto& uop = microOps_.front();
 
   if (uop->exceptionEncountered()) {
@@ -122,7 +124,7 @@ void Core::tick() {
   }
 
   // Issue
-  auto registers = uop->getOperandRegisters();
+  auto registers = uop->getSourceRegisters();
   for (size_t i = 0; i < registers.size(); i++) {
     auto reg = registers[i];
     if (!uop->isOperandReady(i)) {
@@ -132,6 +134,7 @@ void Core::tick() {
 
   // Execute
   if (uop->isLoad()) {
+    std::cout << "  Core: calling generateAddresses..." << std::endl;
     auto addresses = uop->generateAddresses();
     previousAddresses_.clear();
     if (uop->exceptionEncountered()) {

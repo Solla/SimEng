@@ -21,7 +21,7 @@ class RenameUnitTest : public testing::Test {
             lsqQueueSize, lsqQueueSize, memory, completionSlots,
             [](auto registers, auto values) {}, [](auto insn) {}),
         rob(
-            robSize, rat, lsq, [](auto insn) {}, predictor),
+            robSize, rat, lsq, [](auto insn) {}, [](auto addr) {}, predictor, 32, 4),
         renameUnit(input, output, rob, rat, lsq, physRegCounts.size()),
         uop(new MockInstruction),
         uop2(new MockInstruction),

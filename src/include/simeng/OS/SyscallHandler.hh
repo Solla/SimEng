@@ -26,6 +26,7 @@
 
 #include "simeng/Elf.hh"
 #include "simeng/OS/Process.hh"
+#include "simeng/memory/MemoryAccessTarget.hh"
 #include "simeng/SpecialFileDirGen.hh"
 #include "simeng/memory/MMU.hh"
 #include "simeng/memory/Mem.hh"
@@ -165,7 +166,7 @@ struct ProcessStateChange {
   std::vector<RegisterValue> modifiedRegisterValues;
 
   /** Memory address/width pairs to modify */
-  std::vector<MemoryAccessTarget> memoryAddresses;
+  std::vector<simeng::memory::MemoryAccessTarget> memoryAddresses;
 
   /** Values to write to memory */
   std::vector<RegisterValue> memoryAddressValues;

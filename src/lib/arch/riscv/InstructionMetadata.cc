@@ -267,7 +267,7 @@ void InstructionMetadata::alterPseudoInstructions(const cs_insn& insn) {
         // flags) CSRRS Rs, _, _ -> CSRRS Rs, fflags, zero
         operands[1].type =
             RISCV_OP_IMM;  // TODO needs to become reg when Capstone updated
-        operands[1].imm = RISCV_SYSREG_FFLAGS;  // fflags address
+        operands[1].imm = 0x001;  // fflags address
 
         operands[2].type = RISCV_OP_REG;
         operands[2].reg = RISCV_REG_ZERO;
@@ -290,7 +290,7 @@ void InstructionMetadata::alterPseudoInstructions(const cs_insn& insn) {
         // CSRRS Rs, _, _ -> CSRRS Rs, frm, zero
         operands[1].type =
             RISCV_OP_IMM;  // TODO needs to become reg when Capstone updated
-        operands[1].imm = RISCV_SYSREG_FRM;  // frm address
+        operands[1].imm = 0x002;  // frm address
 
         operands[2].type = RISCV_OP_REG;
         operands[2].reg = RISCV_REG_ZERO;
@@ -311,7 +311,7 @@ void InstructionMetadata::alterPseudoInstructions(const cs_insn& insn) {
 
         operands[1].type =
             RISCV_OP_IMM;  // TODO needs to become reg when Capstone updated
-        operands[1].imm = RISCV_SYSREG_FFLAGS;  // fflags address
+        operands[1].imm = 0x001;  // fflags address
 
         operandCount = 3;
       } else if (operandCount == 2 && strcmp(mnemonic, "fsflags") == 0) {
@@ -322,7 +322,7 @@ void InstructionMetadata::alterPseudoInstructions(const cs_insn& insn) {
 
         operands[1].type =
             RISCV_OP_IMM;  // TODO needs to become reg when Capstone updated
-        operands[1].imm = RISCV_SYSREG_FFLAGS;  // fflags address
+        operands[1].imm = 0x001;  // fflags address
 
         operandCount = 3;
       } else if (strcmp(mnemonic, "csrw") == 0) {
@@ -342,7 +342,7 @@ void InstructionMetadata::alterPseudoInstructions(const cs_insn& insn) {
 
         operands[1].type =
             RISCV_OP_IMM;  // TODO needs to become reg when Capstone updated
-        operands[1].imm = RISCV_SYSREG_FRM;  // frm address
+        operands[1].imm = 0x002;  // frm address
 
         operandCount = 3;
       } else if (operandCount == 2 && strcmp(mnemonic, "fsrm") == 0) {
@@ -351,7 +351,7 @@ void InstructionMetadata::alterPseudoInstructions(const cs_insn& insn) {
         operands[2] = operands[1];
 
         operands[1].type = RISCV_OP_IMM;
-        operands[1].imm = RISCV_SYSREG_FRM;
+        operands[1].imm = 0x002;
 
         operandCount = 3;
       }

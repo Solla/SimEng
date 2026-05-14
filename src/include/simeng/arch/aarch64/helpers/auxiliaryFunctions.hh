@@ -1,16 +1,22 @@
 #pragma once
+#ifndef SIMENG_ARCH_AARCH64_AUXILIARYFUNCTIONS_HH
+#define SIMENG_ARCH_AARCH64_AUXILIARYFUNCTIONS_HH
 
 #include <cmath>
 #include <functional>
 #include <limits>
 #include <tuple>
 #include <type_traits>
+#include <vector>
 
 #include "arch/aarch64/InstructionMetadata.hh"
+#include "simeng/RegisterValue.hh"
 
 namespace simeng {
 namespace arch {
 namespace aarch64 {
+
+using srcValContainer = std::vector<RegisterValue>;
 
 /** Returns a correctly formatted nzcv value. */
 inline uint8_t nzcv(bool n, bool z, bool c, bool v) {
@@ -312,38 +318,8 @@ inline uint16_t getElemsFromPattern(const aarch64_svepredpat svePattern,
   }
 }
 
-/** Apply the shift specified by `shiftType` to the unsigned integer `value`,
- * shifting by `amount`. */
-template <typename T>
-inline std::enable_if_t<std::is_integral_v<T> && std::is_unsigned_v<T>, T>
-shiftValue(T value, uint8_t shiftType, uint8_t amount) {
-  switch (shiftType) {
-    case AARCH64_SFT_LSL:
-      return value << amount;
-    case AARCH64_SFT_LSR:
-      return value >> amount;
-    case AARCH64_SFT_ASR:
-      return static_cast<std::make_signed_t<T>>(value) >> amount;
-    case AARCH64_SFT_ROR: {
-      // Assuming sizeof(T) is a power of 2.
-      const T mask = sizeof(T) * 8 - 1;
-      assert((amount <= mask) && "Rotate amount exceeds type width");
-      amount &= mask;
-      return (value >> amount) | (value << ((-amount) & mask));
-    }
-    case AARCH64_SFT_MSL: {
-      // pad in with ones instead of zeros
-      const T mask = (static_cast<T>(1) << static_cast<T>(amount)) - 1;
-      return (value << amount) | mask;
-    }
-    case AARCH64_SFT_INVALID:
-      return value;
-    default:
-      assert(false && "Unknown shift type");
-      return 0;
-  }
-}
-
 }  // namespace aarch64
 }  // namespace arch
 }  // namespace simeng
+
+#endif  // SIMENG_ARCH_AARCH64_AUXILIARYFUNCTIONS_HH

@@ -116,7 +116,7 @@ void SimOS::tick() {
         OS::cpuContext currContext = core->getCurrentContext();
         // Core's stored TID will equal -1 if no process has been previously
         // scheduled (i.e. on first tick of simulation)
-        if (currContext.TID != -1) {
+        if (currContext.TID != (uint64_t)-1) {
           // Find the corresponding process in map
           auto procItr = processes_.find(currContext.TID);
           // If proccess can't be found then it has been terminated so no need

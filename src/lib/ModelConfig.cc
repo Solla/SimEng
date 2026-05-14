@@ -166,7 +166,7 @@ void ModelConfig::validate() {
                 port_num + group_num,
                 std::make_pair(
                     0, static_cast<int>(
-                           AARCH64Opcode::AArch64_INSTRUCTION_LIST_END)),
+                           AARCH64Opcode::INSTRUCTION_LIST_END)),
                 ExpectedValue::UInteger);
           }
 
@@ -308,10 +308,10 @@ void ModelConfig::validate() {
             configFile_["Execution-Units"][i]["Blocking-Groups"].size();
         while (blockingGroups.size()) {
           // Determine if there's any inheritance
-          if (arch::aarch64::groupInheritance.find(blockingGroups.front()) !=
-              arch::aarch64::groupInheritance.end()) {
+          if (arch::aarch64::groupInheritance_.find(blockingGroups.front()) !=
+              arch::aarch64::groupInheritance_.end()) {
             std::vector<uint16_t> inheritedGroups =
-                arch::aarch64::groupInheritance.at(blockingGroups.front());
+                arch::aarch64::groupInheritance_.at(blockingGroups.front());
             for (int k = 0; k < inheritedGroups.size(); k++) {
               blockingGroups.push(inheritedGroups[k]);
               configFile_["Execution-Units"][i]["Blocking-Groups"]
