@@ -9,7 +9,33 @@ build/compile_commands.json
 .DS_Store
 obj
 build
+build-docker/
+build-tests/
+build-tests-aarch64/
 xcode-build
+
+# Logs and ad-hoc scratch output
+*.log
+scratch_*
+*_output.txt
+*_output_*.txt
+simeng_output*.txt
+
+# Test binaries and disassembly produced ad-hoc at the repo root
+hello_simeng
+hello_simeng.S
+test_cmeq
+test_cmeq.S
+
+# Runtime-generated directory used by SimEng for special files
+special-files/
+
+# External SST dependencies (vendored, should not be tracked)
+sst-elements-library-12.0.1/
+sstcore-12.0.1/
+sstcore-12.0.1.tar.gz
+sstelements-12.0.1/
+sstelements-12.0.1.tar.gz
 docs/sphinx/_build
 binaries
 install
