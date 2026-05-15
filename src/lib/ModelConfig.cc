@@ -60,8 +60,8 @@ void ModelConfig::validate() {
   root = "Core";
   subFields = {"ISA",
                "Simulation-Mode",
-               "Clock-Frequency",
-               "Timer-Frequency",
+               "Clock-Frequency-GHz",
+               "Timer-Frequency-MHz",
                "Micro-Operations",
                "Vector-Length",
                "Streaming-Vector-Length"};

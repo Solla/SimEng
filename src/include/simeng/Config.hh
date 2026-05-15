@@ -12,7 +12,8 @@ class Config {
  private:
 #define DEFAULT_CONFIG                                                         \
   ("{Core: {ISA: AArch64, Simulation-Mode: inorderpipelined, "                 \
-   "Clock-Frequency: 2.5, Timer-Frequency: 100, Micro-Operations: True, "      \
+   "Clock-Frequency-GHz: 2.5, Timer-Frequency-MHz: 100, "                      \
+   "Micro-Operations: True, "                                                  \
    "Vector-Length: 512, Streaming-Vector-Length: 512}, Fetch: "                \
    "{Fetch-Block-Size: 32, Loop-Buffer-Size: 64, Loop-Detection-Threshold: "   \
    "4}, Process-Image: {Heap-Size: 10485760, Stack-Size: 1048576, Mmap-Size: " \

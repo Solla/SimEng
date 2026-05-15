@@ -5,10 +5,8 @@
 Core:
   ISA: AArch64
   Simulation-Mode: emulation
-  # Clock Frequency is in GHz.
-  Clock-Frequency: 1.8
-  # Timer-Frequency is in MHz.
-  Timer-Frequency: 100
+  Clock-Frequency-GHz: 1.8
+  Timer-Frequency-MHz: 100
   Micro-Operations: False
   Vector-Length: 512
 Fetch:
