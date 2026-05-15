@@ -52,7 +52,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       implicitSourceCount(insn.detail->regs_read_count),
       implicitDestinationCount(insn.detail->regs_write_count),
       groupCount(insn.detail->groups_count),
-      cc(insn.detail->arm64.cc - 1),
+      // Newer Capstone's AArch64 condition-code enum is 0-based and already
+      // matches the architectural 4-bit encoding (e.g. AArch64CC_HI == 0x8),
+      // so it is used directly. (Old Capstone's enum was 1-based and required
+      // a "- 1" adjustment here.)
+      cc(insn.detail->arm64.cc),
       setsFlags(insn.detail->arm64.update_flags),
       writeback(insn.detail->arm64.post_index),
       operandCount(insn.detail->arm64.op_count) {

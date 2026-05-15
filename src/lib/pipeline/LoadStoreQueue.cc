@@ -106,12 +106,11 @@ void LoadStoreQueue::startLoad(const std::shared_ptr<Instruction>& insn) {
     // Early execution if not addresses need to be accessed
     insn->execute();
 
-    if (insn->exceptionEncountered()) {
-      // Exception; don't pass insn to completedLoads_
-      raiseException_(insn);
-      return;
-    }
-
+    // A load exception (e.g. data abort) must NOT be raised eagerly here: this
+    // load may be speculative / on a mispredicted path. Route it through
+    // completedLoads_ so it reaches the ReorderBuffer in program order, where
+    // the exception is raised at commit (non-speculative) or discarded if the
+    // load is flushed first.
     completedLoads_.push(insn);
   } else {
     // Create a speculative entry for the load
@@ -522,13 +521,12 @@ void LoadStoreQueue::tick() {
       // This load has completed
       load->execute();
 
-      if (load->exceptionEncountered()) {
-        // Exception; don't pass load to completedLoads_
-        raiseException_(load);
-        continue;
-      }
-
-      if (load->isStoreData()) {
+      // A load exception (e.g. data abort) must NOT be raised eagerly here:
+      // this load may be speculative / on a mispredicted path. Route it
+      // through completedLoads_ so it reaches the ReorderBuffer in program
+      // order, where the exception is raised at commit (non-speculative) or
+      // discarded if the load is flushed first.
+      if (!load->exceptionEncountered() && load->isStoreData()) {
         supplyStoreData(load);
       }
       completedLoads_.push(load);
