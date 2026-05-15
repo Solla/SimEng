@@ -32,7 +32,7 @@ Queue-Sizes:
   Load: 130
   Store: 60
 Port-Allocator:
-  Type: Balanced
+  Type: M1
 Branch-Predictor:
   Type: "TAGE"
   BTB-Tag-Bits: 11

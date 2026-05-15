@@ -196,8 +196,42 @@ void CoreInstance::createCore() {
       portArrangement[i].push_back(config_groups[j].as<uint16_t>());
     }
   }
-  portAllocator_ = std::make_unique<simeng::pipeline::BalancedPortAllocator>(
-      portArrangement);
+  // Initialise the desired port allocator. The config key is optional; if it
+  // is absent (older configs) fall back to the Balanced allocator.
+  std::string portAllocatorType = "Balanced";
+  if (config_["Port-Allocator"] && config_["Port-Allocator"]["Type"]) {
+    portAllocatorType = config_["Port-Allocator"]["Type"].as<std::string>();
+  }
+  if (portAllocatorType == "Balanced") {
+    portAllocator_ = std::make_unique<simeng::pipeline::BalancedPortAllocator>(
+        portArrangement);
+  } else if (portAllocatorType == "A64FX") {
+    portAllocator_ = std::make_unique<simeng::pipeline::A64FXPortAllocator>(
+        portArrangement);
+  } else if (portAllocatorType == "M1") {
+    // Extract the reservation station arrangement from the config file. The
+    // old yaml-cpp ModelConfig rewrites each RS's "Ports" entries to numeric
+    // port indices in place, so index the port->RS map by those.
+    auto config_rs = config_["Reservation-Stations"];
+    std::vector<std::pair<uint16_t, uint64_t>> rsArrangement;
+    for (size_t i = 0; i < config_rs.size(); i++) {
+      auto config_rs_ports = config_rs[i]["Ports"];
+      uint64_t rsSize = config_rs[i]["Size"].as<uint64_t>();
+      for (size_t j = 0; j < config_rs_ports.size(); j++) {
+        uint16_t port = config_rs_ports[j].as<uint16_t>();
+        if (static_cast<uint16_t>(rsArrangement.size()) < port + 1) {
+          rsArrangement.resize(port + 1);
+        }
+        rsArrangement[port] = {static_cast<uint16_t>(i), rsSize};
+      }
+    }
+    portAllocator_ = std::make_unique<simeng::pipeline::M1PortAllocator>(
+        portArrangement, rsArrangement);
+  } else {
+    std::cerr << "[SimEng:CoreInstance] Invalid Port-Allocator type \""
+              << portAllocatorType << "\" selected." << std::endl;
+    exit(EXIT_FAILURE);
+  }
 
   // Construct the core object based on the defined simulation mode
   if (mode_ == SimulationMode::Emulation) {
