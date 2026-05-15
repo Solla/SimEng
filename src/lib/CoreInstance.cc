@@ -208,7 +208,7 @@ void CoreInstance::createCore() {
   } else if (portAllocatorType == "A64FX") {
     portAllocator_ = std::make_unique<simeng::pipeline::A64FXPortAllocator>(
         portArrangement);
-  } else if (portAllocatorType == "M1") {
+  } else if (portAllocatorType == "RSAware") {
     // Extract the reservation station arrangement from the config file. The
     // old yaml-cpp ModelConfig rewrites each RS's "Ports" entries to numeric
     // port indices in place, so index the port->RS map by those.
@@ -225,7 +225,7 @@ void CoreInstance::createCore() {
         rsArrangement[port] = {static_cast<uint16_t>(i), rsSize};
       }
     }
-    portAllocator_ = std::make_unique<simeng::pipeline::M1PortAllocator>(
+    portAllocator_ = std::make_unique<simeng::pipeline::RSAwarePortAllocator>(
         portArrangement, rsArrangement);
   } else {
     std::cerr << "[SimEng:CoreInstance] Invalid Port-Allocator type \""

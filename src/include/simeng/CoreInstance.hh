@@ -21,7 +21,7 @@
 #include "simeng/models/outoforder/Core.hh"
 #include "simeng/pipeline/A64FXPortAllocator.hh"
 #include "simeng/pipeline/BalancedPortAllocator.hh"
-#include "simeng/pipeline/M1PortAllocator.hh"
+#include "simeng/pipeline/RSAwarePortAllocator.hh"
 
 namespace simeng {
 

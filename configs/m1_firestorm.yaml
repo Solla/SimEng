@@ -31,7 +31,7 @@ Queue-Sizes:
   Load: 130
   Store: 60
 Port-Allocator:
-  Type: M1
+  Type: RSAware
 Branch-Predictor:
   Type: "TAGE"
   BTB-Tag-Bits: 11

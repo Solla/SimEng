@@ -1,12 +1,12 @@
 #include "gtest/gtest.h"
-#include "simeng/pipeline/M1PortAllocator.hh"
+#include "simeng/pipeline/RSAwarePortAllocator.hh"
 
 namespace simeng {
 namespace pipeline {
 
-class M1PortAllocatorTest : public testing::Test {
+class RSAwarePortAllocatorTest : public testing::Test {
  public:
-  M1PortAllocatorTest() : portAllocator(portArrangement, rsArrangement) {
+  RSAwarePortAllocatorTest() : portAllocator(portArrangement, rsArrangement) {
     portAllocator.setRSSizeGetter(
         [this](std::vector<uint32_t>& sizeVec) { rsSizes(sizeVec); });
   }
@@ -28,17 +28,17 @@ class M1PortAllocatorTest : public testing::Test {
       {0, 24}, {1, 26}, {2, 16}, {3, 12},  {4, 28},  {5, 28},  {6, 12},
       {7, 12}, {8, 12}, {9, 12}, {10, 36}, {11, 36}, {12, 36}, {13, 36}};
 
-  M1PortAllocator portAllocator;
+  RSAwarePortAllocator portAllocator;
 };
 
 // Tests correct allocation for single port groups (i.e. INT_DIV_OR_SQRT)
-TEST_F(M1PortAllocatorTest, singlePortAllocation) {
+TEST_F(RSAwarePortAllocatorTest, singlePortAllocation) {
   std::vector<uint16_t> ports = {4};
   EXPECT_EQ(portAllocator.allocate(ports), 4);
 }
 
 // Tests correct allocation of multiple INT_SIMPLE instructions
-TEST_F(M1PortAllocatorTest, allocationIntSimple) {
+TEST_F(RSAwarePortAllocatorTest, allocationIntSimple) {
   std::vector<uint16_t> ports = {0, 1, 2, 3, 4, 5};
   EXPECT_EQ(portAllocator.allocate(ports), 0);
   rsFreeEntries[0]--;
@@ -63,7 +63,7 @@ TEST_F(M1PortAllocatorTest, allocationIntSimple) {
 }
 
 // Tests correct allocation of multiple BRANCH instructions
-TEST_F(M1PortAllocatorTest, allocationBranch) {
+TEST_F(RSAwarePortAllocatorTest, allocationBranch) {
   std::vector<uint16_t> ports = {0, 1};
   EXPECT_EQ(portAllocator.allocate(ports), 0);
   rsFreeEntries[0]--;
@@ -80,7 +80,7 @@ TEST_F(M1PortAllocatorTest, allocationBranch) {
 }
 
 // Tests correct allocation of multiple INT_MUL instructions
-TEST_F(M1PortAllocatorTest, allocationIntMul) {
+TEST_F(RSAwarePortAllocatorTest, allocationIntMul) {
   std::vector<uint16_t> ports = {4, 5};
   EXPECT_EQ(portAllocator.allocate(ports), 4);
   rsFreeEntries[4]--;
@@ -97,7 +97,7 @@ TEST_F(M1PortAllocatorTest, allocationIntMul) {
 }
 
 // Tests correct allocation of multiple LOAD instructions
-TEST_F(M1PortAllocatorTest, allocationLoad) {
+TEST_F(RSAwarePortAllocatorTest, allocationLoad) {
   std::vector<uint16_t> ports = {7, 8, 9};
   EXPECT_EQ(portAllocator.allocate(ports), 7);
   rsFreeEntries[7]--;
@@ -116,7 +116,7 @@ TEST_F(M1PortAllocatorTest, allocationLoad) {
 }
 
 // Tests correct allocation of multiple STORE instructions
-TEST_F(M1PortAllocatorTest, allocationStore) {
+TEST_F(RSAwarePortAllocatorTest, allocationStore) {
   std::vector<uint16_t> ports = {6, 7};
   EXPECT_EQ(portAllocator.allocate(ports), 6);
   rsFreeEntries[6]--;
@@ -133,7 +133,7 @@ TEST_F(M1PortAllocatorTest, allocationStore) {
 }
 
 // Tests correct allocation of multiple FP / VECTOR instructions
-TEST_F(M1PortAllocatorTest, allocationFpVec) {
+TEST_F(RSAwarePortAllocatorTest, allocationFpVec) {
   std::vector<uint16_t> ports = {10, 11, 12, 13};
   EXPECT_EQ(portAllocator.allocate(ports), 10);
   rsFreeEntries[10]--;

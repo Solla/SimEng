@@ -518,7 +518,7 @@ void ModelConfig::setExpectations(bool isDefault) {
   expectations_["Port-Allocator"].addChild(
       ExpectationNode::createExpectation<std::string>("Balanced", "Type"));
   expectations_["Port-Allocator"]["Type"].setValueSet(
-      std::vector<std::string>{"Balanced", "A64FX", "M1"});
+      std::vector<std::string>{"Balanced", "A64FX", "RSAware"});
 
   // Branch-Predictor
   expectations_.addChild(

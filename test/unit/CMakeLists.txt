@@ -16,7 +16,7 @@ set(TEST_SOURCES
     pipeline/ExecuteUnitTest.cc
     pipeline/FetchUnitTest.cc
     pipeline/LoadStoreQueueTest.cc
-    pipeline/M1PortAllocatorTest.cc
+    pipeline/RSAwarePortAllocatorTest.cc
     pipeline/MappedRegisterFileSetTest.cc
     pipeline/PipelineBufferTest.cc
     pipeline/RegisterAliasTableTest.cc

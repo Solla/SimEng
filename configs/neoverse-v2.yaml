@@ -28,7 +28,7 @@ Queue-Sizes:
   Load: 64
   Store: 36
 Port-Allocator:
-  Type: M1
+  Type: RSAware
 Branch-Predictor:
   Type: "Perceptron"
   BTB-Tag-Bits: 11

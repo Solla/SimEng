@@ -1,4 +1,4 @@
-#include "simeng/pipeline/M1PortAllocator.hh"
+#include "simeng/pipeline/RSAwarePortAllocator.hh"
 
 #include <cassert>
 #include <cstdint>
@@ -7,12 +7,12 @@
 namespace simeng {
 namespace pipeline {
 
-M1PortAllocator::M1PortAllocator(
+RSAwarePortAllocator::RSAwarePortAllocator(
     const std::vector<std::vector<uint16_t>>& portArrangement,
     std::vector<std::pair<uint16_t, uint64_t>> rsArrangement)
     : weights(portArrangement.size(), 0), rsArrangement_(rsArrangement) {}
 
-uint16_t M1PortAllocator::allocate(const std::vector<uint16_t>& ports) {
+uint16_t RSAwarePortAllocator::allocate(const std::vector<uint16_t>& ports) {
   assert(ports.size() &&
          "No supported ports supplied; cannot allocate from a empty set");
   bool foundPort = false;
@@ -54,18 +54,18 @@ uint16_t M1PortAllocator::allocate(const std::vector<uint16_t>& ports) {
   return bestPort;
 }
 
-void M1PortAllocator::issued(uint16_t port) {
+void RSAwarePortAllocator::issued(uint16_t port) {
   assert(weights[port] > 0);
   weights[port]--;
 }
 
-void M1PortAllocator::deallocate(uint16_t port) { issued(port); }
+void RSAwarePortAllocator::deallocate(uint16_t port) { issued(port); }
 
-void M1PortAllocator::setRSSizeGetter(
+void RSAwarePortAllocator::setRSSizeGetter(
     std::function<void(std::vector<uint32_t>&)> rsSizes) {
   rsSizes_ = rsSizes;
 }
 
-void M1PortAllocator::tick() {}
+void RSAwarePortAllocator::tick() {}
 }  // namespace pipeline
 }  // namespace simeng

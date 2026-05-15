@@ -11,14 +11,14 @@ namespace pipeline {
 /** A load-balancing port allocator implementation. Maintains demand weightings
  * for each port, and allocates instructions to the suitable port with the
  * lowest weighting. */
-class M1PortAllocator : public PortAllocator {
+class RSAwarePortAllocator : public PortAllocator {
  public:
   /** Construct a load-balancing port allocator, providing a port arrangement
    * specification. Each element of the port arrangement should represent a
    * port, and contain a list of the instruction groups that port supports and
    * a port type which denotes the matching requirements of said instruction
    * groups. */
-  M1PortAllocator(const std::vector<std::vector<uint16_t>>& portArrangement,
+  RSAwarePortAllocator(const std::vector<std::vector<uint16_t>>& portArrangement,
                   std::vector<std::pair<uint16_t, uint64_t>> rsArrangement);
 
   /** Allocate the lowest weighted port available for the specified instruction
