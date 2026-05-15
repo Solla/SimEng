@@ -44,9 +44,18 @@ void FetchUnit::tick() {
       assert(bytesRead != 0 && "predecode failure for loop buffer entry");
       (void)bytesRead;
 
-      // Set prediction to recorded value during loop buffer filling
+      // Still consult the branch predictor for loop-buffered branches. The
+      // predictor follows an FTQ protocol: every branch reaching the ROB is
+      // matched by exactly one predict() (ftq push / history advance) and one
+      // update()/flush(). Reusing the recorded prediction without calling
+      // predict() would commit/flush ftq entries that were never pushed,
+      // desyncing the FTQ and global history (catastrophic for loop-heavy
+      // code such as Dhrystone). The loop buffer remains a fetch-bandwidth
+      // optimisation only; control flow is still driven by loopBuffer_.
       if (macroOp[0]->isBranch()) {
-        macroOp[0]->setBranchPrediction(loopBuffer_.front().prediction);
+        macroOp[0]->setBranchPrediction(branchPredictor_.predict(
+            loopBuffer_.front().address, macroOp[0]->getBranchType(),
+            macroOp[0]->getKnownOffset()));
       }
 
       // Cycle queue by moving front entry to back

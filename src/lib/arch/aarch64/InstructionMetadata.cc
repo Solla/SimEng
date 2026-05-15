@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <cstring>
+#include <unordered_map>
 
 // Compatibility defines for instruction aliases removed in new Capstone API.
 // These IDs are never emitted by new Capstone; cases are dead code.
@@ -1677,9 +1678,43 @@ InstructionMetadata::InstructionMetadata(const uint8_t* invalidEncoding,
 }
 
 void InstructionMetadata::revertAliasing() {
+  // Newer Capstone no longer assigns a distinct instruction id to aliased
+  // mnemonics: it reports the canonical instruction's id (e.g. `mov` -> ORR,
+  // `cmp` -> SUBS) while still printing the alias mnemonic. The alias-handling
+  // cases below are keyed by the (now never-emitted) alias ids, so dispatch on
+  // an id derived from the printed mnemonic instead. Genuine, non-aliased
+  // instructions keep a mnemonic that never collides with these alias keywords
+  // and so fall through untouched.
+  static const std::unordered_map<std::string, int> aliasMnemonicIds = {
+      {"asr", AARCH64_INS_ASR},       {"at", AARCH64_INS_AT},
+      {"bfi", AARCH64_INS_BFI},       {"bfxil", AARCH64_INS_BFXIL},
+      {"cinc", AARCH64_INS_CINC},     {"cinv", AARCH64_INS_CINV},
+      {"cmn", AARCH64_INS_CMN},       {"cmp", AARCH64_INS_CMP},
+      {"cneg", AARCH64_INS_CNEG},     {"cset", AARCH64_INS_CSET},
+      {"csetm", AARCH64_INS_CSETM},   {"dc", AARCH64_INS_DC},
+      {"ic", AARCH64_INS_IC},         {"lsl", AARCH64_INS_LSL},
+      {"lsr", AARCH64_INS_LSR},       {"mneg", AARCH64_INS_MNEG},
+      {"mov", AARCH64_INS_MOV},       {"mul", AARCH64_INS_MUL},
+      {"mvn", AARCH64_INS_MVN},       {"neg", AARCH64_INS_NEG},
+      {"negs", AARCH64_INS_NEGS},     {"ngc", AARCH64_INS_NGC},
+      {"ngcs", AARCH64_INS_NGCS},     {"not", AARCH64_INS_NOT},
+      {"rev64", AARCH64_INS_REV64},   {"ror", AARCH64_INS_ROR},
+      {"sbfiz", AARCH64_INS_SBFIZ},   {"sbfx", AARCH64_INS_SBFX},
+      {"smnegl", AARCH64_INS_SMNEGL}, {"smull", AARCH64_INS_SMULL},
+      {"sxtb", AARCH64_INS_SXTB},     {"sxth", AARCH64_INS_SXTH},
+      {"sxtw", AARCH64_INS_SXTW},     {"sys", AARCH64_INS_SYS},
+      {"tlbi", AARCH64_INS_TLBI},     {"tst", AARCH64_INS_TST},
+      {"ubfiz", AARCH64_INS_UBFIZ},   {"ubfx", AARCH64_INS_UBFX},
+      {"umnegl", AARCH64_INS_UMNEGL}, {"umull", AARCH64_INS_UMULL},
+      {"uxtb", AARCH64_INS_UXTB},     {"uxth", AARCH64_INS_UXTH},
+  };
+  int aliasId = id;
+  auto aliasIt = aliasMnemonicIds.find(mnemonic);
+  if (aliasIt != aliasMnemonicIds.end()) aliasId = aliasIt->second;
+
   // Check mnemonics known to be aliases and see if their opcode matches
   // something else
-  switch (id) {
+  switch (aliasId) {
     case AARCH64_INS_ASR:
       if (opcode == Opcode::AArch64_ASRVWr ||
           opcode == Opcode::AArch64_ASRVXr) {
@@ -1688,7 +1723,15 @@ void InstructionMetadata::revertAliasing() {
       }
       if (opcode == Opcode::AArch64_SBFMWri ||
           opcode == Opcode::AArch64_SBFMXri) {
+        // asr rd, rn, #amount; alias for sbfm rd, rn, #amount, #<31|63>
+        // Newer Capstone supplies the amount in operands[1].shift.
         operandCount = 4;
+
+        int64_t amount = operands[1].shift.value;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[2].type = AARCH64_OP_IMM;
+        operands[2].access = CS_AC_READ;
+        operands[2].imm = amount;
 
         operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;
@@ -1860,13 +1903,18 @@ void InstructionMetadata::revertAliasing() {
           opcode == Opcode::AArch64_UBFMXri) {
         // lsl rd, rn, #shift; alias for:
         //  ubfm rd, rn, #(-shift MOD <32|64>), #(<31|63> - shift)
+        // Newer Capstone supplies the shift amount in operands[1].shift, not
+        // as a separate immediate operand.
         operandCount = 4;
         uint8_t highestBit = 63;
         if (opcode == Opcode::AArch64_UBFMWri) {
           highestBit = 31;
         }
 
-        auto shift = operands[2].imm;
+        int64_t shift = operands[1].shift.value;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[2].type = AARCH64_OP_IMM;
+        operands[2].access = CS_AC_READ;
         operands[2].imm = (-shift) & highestBit;
         operands[3].type = AARCH64_OP_IMM;
         operands[3].imm = highestBit - shift;
@@ -1888,7 +1936,14 @@ void InstructionMetadata::revertAliasing() {
       if (opcode == Opcode::AArch64_UBFMWri ||
           opcode == Opcode::AArch64_UBFMXri) {
         // lsr rd, rn, #amount; alias for ubfm rd, rn, #amount, #<31|63>
+        // Newer Capstone supplies the amount in operands[1].shift.
         operandCount = 4;
+
+        int64_t amount = operands[1].shift.value;
+        operands[1].shift = {AARCH64_SFT_INVALID, 0};
+        operands[2].type = AARCH64_OP_IMM;
+        operands[2].access = CS_AC_READ;
+        operands[2].imm = amount;
 
         operands[3].type = AARCH64_OP_IMM;
         operands[3].access = CS_AC_READ;

@@ -2325,6 +2325,25 @@ void Instruction::execute() {
         // TODO: Observe hints
         break;
       }
+      // ARMv8.3 Pointer Authentication instructions in the HINT-encoded
+      // (no-PAC) space. With PAC unimplemented these architecturally execute
+      // as NOPs, so treat them as such here.
+      case Opcode::AArch64_PACIASP:
+      case Opcode::AArch64_PACIAZ:
+      case Opcode::AArch64_PACIBSP:
+      case Opcode::AArch64_PACIBZ:
+      case Opcode::AArch64_AUTIASP:
+      case Opcode::AArch64_AUTIAZ:
+      case Opcode::AArch64_AUTIBSP:
+      case Opcode::AArch64_AUTIBZ:
+      case Opcode::AArch64_XPACLRI: {
+        // These all read and write X30 (LR). With PAC unimplemented the value
+        // is architecturally unchanged, so pass the source LR through to the
+        // destination rather than leaving an uninitialised result that would
+        // be forwarded to dependent instructions.
+        results[0] = operands[0];
+        break;
+      }
       case Opcode::AArch64_INCB_XPiI: {  // incb xdn{, pattern{, #imm}}
         results[0] =
             sveHelp::sveInc_gprImm<int8_t>(operands, metadata, VL_bits);
@@ -5432,10 +5451,6 @@ void Instruction::execute() {
             sveHelp::sveWhile<int64_t, int32_t>(operands, VL_bits, [](int64_t a, int64_t b){ return a < b; });
         results[0] = nzcv;
         results[1] = output;
-        break;
-      }
-      case Opcode::AArch64_XPACLRI: {  // xpaclri
-        // SimEng doesn't support PAC, so do nothing
         break;
       }
       case Opcode::AArch64_XTNv2i32: {  // xtn vd.2s, vn.2d

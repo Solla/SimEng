@@ -88,6 +88,7 @@ Instruction::Instruction(const Instruction& other)
   isLastMicroOp_ = other.isLastMicroOp_;
   waitingCommit_ = other.waitingCommit_;
   microOpIndex_ = other.microOpIndex_;
+  operandsPending = other.operandsPending;
 }
 
 void Instruction::print() const {

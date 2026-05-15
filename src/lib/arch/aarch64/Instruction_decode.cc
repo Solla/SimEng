@@ -113,6 +113,11 @@ Register csRegToRegister(aarch64_reg reg) {
     return {RegisterType::PREDICATE, 16};
   }
 
+  // AARCH64_REG_FPCR is the floating-point control register (system register)
+  if (reg == AARCH64_REG_FPCR) {
+    return {RegisterType::SYSTEM, ARM64_SYSREG_TAGS::FPCR};
+  }
+
   // The matrix register (ZA) can also be referenced as a whole in some
   // instructions.
   if (reg == AARCH64_REG_ZA) {

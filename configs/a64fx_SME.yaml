@@ -5,7 +5,6 @@
 Core:
   ISA: AArch64
   Simulation-Mode: outoforder
-  ISA: AArch64
   # Clock Frequency is in GHz.
   Clock-Frequency: 1.8
   # Timer-Frequency is in MHz.
@@ -29,7 +28,8 @@ Register-Set:
   FloatingPoint/SVE-Count: 128
   Predicate-Count: 48
   Conditional-Count: 128
-  Matrix-Count: 2
+  SME-Matrix-Count: 2
+  SME-Lookup-Table-Count: 1
 Pipeline-Widths:
   Commit: 4
   FrontEnd: 4

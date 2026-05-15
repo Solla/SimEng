@@ -10,6 +10,7 @@
 #include "simeng/FlatMemoryInterface.hh"
 #include "simeng/GenericPredictor.hh"
 #include "simeng/OS/SyscallHandler.hh"
+#include "simeng/branchpredictors/TAGEPredictor.hh"
 #include "simeng/arch/Architecture.hh"
 #include "simeng/arch/aarch64/Architecture.hh"
 #include "simeng/arch/riscv/Architecture.hh"

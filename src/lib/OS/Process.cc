@@ -128,7 +128,7 @@ Process::Process(
         HostFileMMap());
 
     assert(
-        retAddr != startAddr &&
+        retAddr == startAddr &&
         "Address returned from mmapRegion MAP_FIXED is not the same as "
         "supplied arg.");
 

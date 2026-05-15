@@ -172,8 +172,19 @@ void CoreInstance::createCore() {
     arch_ = std::make_unique<simeng::arch::aarch64::Architecture>();
   }
 
-  // Construct branch predictor object
-  predictor_ = std::make_unique<simeng::GenericPredictor>();
+  // Construct branch predictor object honouring the configured type. The
+  // config requests a specific predictor (e.g. "TAGE" for the C1 Ultra
+  // model); previously GenericPredictor was hardcoded, which produced an
+  // unrealistically high misprediction rate.
+  std::string bpType = "Generic";
+  if (config_["Branch-Predictor"]["Type"]) {
+    bpType = config_["Branch-Predictor"]["Type"].as<std::string>();
+  }
+  if (bpType == "TAGE") {
+    predictor_ = std::make_unique<simeng::TAGEPredictor>();
+  } else {
+    predictor_ = std::make_unique<simeng::GenericPredictor>();
+  }
 
   // Extract port arrangement from config file
   auto config_ports = config_["Ports"];

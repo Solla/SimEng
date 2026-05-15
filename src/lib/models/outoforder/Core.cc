@@ -19,6 +19,7 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
            pipeline::PortAllocator& portAllocator,
            arch::sendSyscallToHandler handleSyscall, YAML::Node& config)
     : isa_(isa),
+      branchPredictor_(branchPredictor),
       physicalRegisterStructures_(isa.getConfigPhysicalRegisterStructure()),
       physicalRegisterQuantities_(isa.getConfigPhysicalRegisterQuantities()),
       registerFileSet_(physicalRegisterStructures_),
@@ -221,6 +222,12 @@ void Core::flushIfNeeded() {
 
     fetchUnit_.flushLoopBuffer();
     fetchUnit_.updatePC(targetAddress);
+
+    // Rewind the predictor for branches squashed in the front-end buffers
+    // before they are wiped (these are younger than any ROB branch, so this
+    // must precede reorderBuffer_.flush()).
+    flushFrontEndPredictions(true);
+
     fetchToDecodeBuffer_.fill({});
     fetchToDecodeBuffer_.stall(false);
 
@@ -247,10 +254,53 @@ void Core::flushIfNeeded() {
 
     fetchUnit_.flushLoopBuffer();
     fetchUnit_.updatePC(targetAddress);
+
+    // Only the Fetch/Decode buffer is wiped here; rewind the predictor for
+    // just those branches.
+    flushFrontEndPredictions(false);
+
     fetchToDecodeBuffer_.fill({});
     fetchToDecodeBuffer_.stall(false);
 
     flushes_++;
+  }
+}
+
+void Core::flushFrontEndPredictions(bool includeDecodeRename) {
+  // Branches sitting in the Fetch/Decode or Decode/Rename buffers had
+  // predict() called (FTQ pushed / global history advanced) but are not yet
+  // reserved in the reorder buffer (RenameUnit reserves the ROB entry at the
+  // same time it writes renameToDispatchBuffer_, so renameToDispatch branches
+  // are already covered by reorderBuffer_.flush() and must NOT be rewound
+  // again here). Rewind the not-yet-reserved branches so the predictor's FTQ
+  // stays in sync. Only the count of flush() calls matters for history, so
+  // iteration order is unimportant.
+  auto flushBranch = [this](const std::shared_ptr<Instruction>& insn) {
+    if (insn != nullptr && insn->isBranch()) {
+      branchPredictor_.flush(insn->getInstructionAddress());
+    }
+  };
+
+  // Fetch/Decode buffer holds MacroOps (vectors of micro-ops); the branch, if
+  // any, is the head micro-op.
+  for (auto* slots :
+       {fetchToDecodeBuffer_.getHeadSlots(),
+        fetchToDecodeBuffer_.getTailSlots()}) {
+    for (size_t i = 0; i < fetchToDecodeBuffer_.getWidth(); i++) {
+      const MacroOp& macroOp = slots[i];
+      if (!macroOp.empty()) flushBranch(macroOp[0]);
+    }
+  }
+
+  if (!includeDecodeRename) return;
+
+  // NOTE: only decodeToRenameBuffer_ — renameToDispatchBuffer_ branches are
+  // already reserved in the ROB and rewound by reorderBuffer_.flush().
+  for (auto* slots : {decodeToRenameBuffer_.getHeadSlots(),
+                      decodeToRenameBuffer_.getTailSlots()}) {
+    for (size_t i = 0; i < decodeToRenameBuffer_.getWidth(); i++) {
+      flushBranch(slots[i]);
+    }
   }
 }
 

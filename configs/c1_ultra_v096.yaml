@@ -1,0 +1,307 @@
+# C1 Ultra (Apple Silicon) core
+Core:
+  ISA: AArch64
+  Simulation-Mode: outoforder
+  Clock-Frequency-GHz: 3.5
+  Clock-Frequency: 3.5
+  Timer-Frequency-MHz: 100
+  Timer-Frequency: 100
+  Micro-Operations: True
+  Vector-Length: 128
+  Streaming-Vector-Length: 512
+Fetch:
+  Fetch-Block-Size: 64
+  MOP-Queue-Size: 2
+  MOP-Cache-Tag-Bits: 8
+  Loop-Buffer-Size: 16
+  Loop-Detection-Threshold: 4
+Process-Image:
+  Heap-Size: 1073741824
+  Stack-Size: 1048576
+Simulation-Memory:
+  Size: 1085276160
+Register-Set:
+  GeneralPurpose-Count: 394
+  FloatingPoint/SVE-Count: 432
+  Predicate-Count: 64
+  Conditional-Count: 128
+  SME-Matrix-Count: 1
+  Matrix-Count: 1
+  SME-Lookup-Table-Count: 1
+Pipeline-Widths:
+  Commit: 16
+  FrontEnd: 10
+  LSQ-Completion: 4 
+Queue-Sizes:
+  ROB: 320
+  Load: 130
+  Store: 60
+Port-Allocator:
+  Type: Balanced
+Branch-Predictor:
+  Type: "TAGE"
+  BTB-Tag-Bits: 11
+  Saturating-Count-Bits: 2
+  Global-History-Length: 19
+  RAS-entries: 8
+  Fallback-Static-Predictor: "Always-Taken"
+  TAGE-Table-Bits: 12
+  Num-TAGE-Tables: 6
+  Tag-Length: 8
+L1-Data-Memory:
+  Interface-Type: Fixed
+L1-Instruction-Memory:
+  Interface-Type: Flat
+LSQ-L1-Interface:
+  Access-Latency: 4
+  Exclusive: False
+  Load-Bandwidth: 64
+  Store-Bandwidth: 64
+  Permitted-Requests-Per-Cycle: 4
+  Permitted-Loads-Per-Cycle: 3
+  Permitted-Stores-Per-Cycle: 2
+Ports:
+  0:
+    Portname: Branch0
+    Instruction-Support:
+      - BRANCH
+  1:
+    Portname: Branch1
+    Instruction-Support:
+      - BRANCH
+  2:
+    Portname: Branch2
+    Instruction-Support:
+      - BRANCH
+  3:
+    Portname: INT_S0
+    Instruction-Support:
+      - INT_SIMPLE
+  4:
+    Portname: INT_S1
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
+  5:
+    Portname: INT_S2
+    Instruction-Support:
+      - INT_SIMPLE
+  6:
+    Portname: INT_S3
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
+  7:
+    Portname: INT_S4
+    Instruction-Support:
+      - INT_SIMPLE
+  8:
+    Portname: INT_S5
+    Instruction-Support:
+      - INT_SIMPLE
+  9:
+    Portname: INT_M0
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_DIV_OR_SQRT
+  10:
+    Portname: INT_M1
+    Instruction-Support:
+      - INT_SIMPLE
+      - INT_MUL
+  11:
+    Portname: LS0
+    Instruction-Support:
+      - LOAD
+      - STORE
+  12:
+    Portname: LS1
+    Instruction-Support:
+      - LOAD
+      - STORE
+  13:
+    Portname: L2
+    Instruction-Support:
+      - LOAD
+  14:
+    Portname: L3
+    Instruction-Support:
+      - LOAD
+  15:
+    Portname: D0
+    Instruction-Support:
+      - STORE
+  16:
+    Portname: D1
+    Instruction-Support:
+      - STORE
+  17:
+    Portname: V0
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
+  18:
+    Portname: V1
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
+  19:
+    Portname: V2
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
+  20:
+    Portname: V3
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
+  21:
+    Portname: V4
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
+  22:
+    Portname: V5
+    Instruction-Support:
+      - FP
+      - VECTOR
+      - SCALAR
+Reservation-Stations:
+  0:
+    Size: 24
+    Dispatch-Rate: 10
+    Ports:
+      - Branch0
+      - Branch1
+      - Branch2
+  1:
+    Size: 32
+    Dispatch-Rate: 10
+    Ports:
+      - INT_S0
+      - INT_S1
+      - INT_S2
+      - INT_S3
+      - INT_S4
+      - INT_S5
+      - INT_M0
+      - INT_M1
+  2:
+    Size: 48
+    Dispatch-Rate: 10
+    Ports:
+      - LS0
+      - LS1
+      - L2
+      - L3
+      - D0
+      - D1
+  3:
+    Size: 64
+    Dispatch-Rate: 10
+    Ports:
+      - V0
+      - V1
+      - V2
+      - V3
+      - V4
+      - V5
+Execution-Units:
+  0:
+    Pipelined: True
+  1:
+    Pipelined: True
+  2:
+    Pipelined: True
+  3:
+    Pipelined: True
+  4:
+    Pipelined: True
+  5:
+    Pipelined: True
+  6:
+    Pipelined: True
+  7:
+    Pipelined: True
+  8:
+    Pipelined: True
+  9:
+    Pipelined: True
+  10:
+    Pipelined: True
+  11:
+    Pipelined: True
+  12:
+    Pipelined: True
+  13:
+    Pipelined: True
+  14:
+    Pipelined: True
+  15:
+    Pipelined: True
+  16:
+    Pipelined: True
+  17:
+    Pipelined: True
+  18:
+    Pipelined: True
+  19:
+    Pipelined: True
+  20:
+    Pipelined: True
+  21:
+    Pipelined: True
+  22:
+    Pipelined: True
+Latencies:
+  0:
+    Instruction-Groups:
+      - INT_SIMPLE
+      - BRANCH
+    Execution-Latency: 1
+    Execution-Throughput: 1
+  1:
+    Instruction-Groups:
+      - INT_MUL
+    Execution-Latency: 2
+    Execution-Throughput: 1
+  2:
+    Instruction-Groups:
+      - INT_DIV_OR_SQRT
+    Execution-Latency: 12
+    Execution-Throughput: 12
+  3:
+    Instruction-Groups:
+      - FP
+      - VECTOR
+      - SCALAR
+    Execution-Latency: 3
+    Execution-Throughput: 1
+  4:
+    Instruction-Groups:
+      - LOAD
+    Execution-Latency: 4
+    Execution-Throughput: 1
+  5:
+    Instruction-Groups:
+      - STORE
+    Execution-Latency: 1
+    Execution-Throughput: 1
+CPU-Info:
+  Generate-Special-Dir: True
+  Core-Count: 1
+  Socket-Count: 1
+  SMT: 1
+  BogoMIPS: 100.00
+  Features: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm jscvt fcma lrcpc dcpop sha3 asimddp sha512 asimdfhm dit uscat ilrcpc flagm ssbs sb paca pacg dcpodp flagm2 frint sve sve2 sme sme2
+  CPU-Implementer: "0x41"
+  CPU-Architecture: 9
+  CPU-Variant: "0x1"
+  CPU-Part: "0x001"
+  CPU-Revision: 0
+  Package-Count: 1

@@ -141,9 +141,13 @@ void ExecuteUnit::execute(std::shared_ptr<Instruction>& uop) {
   if (uop->isBranch()) {
     pc_ = uop->getBranchAddress();
 
-    // Update branch predictor with branch results
-    predictor_.update(uop->getInstructionAddress(), uop->wasBranchTaken(), pc_,
-                      uop->getBranchType(), uop->getInstructionId());
+    // NOTE: the branch predictor is intentionally NOT updated here. Resolving
+    // a branch at execute is out-of-order and speculative (possibly wrong
+    // path). The predictor follows an FTQ protocol: it is rewound via
+    // predictor_.flush() for squashed branches and updated in program order
+    // at commit (ReorderBuffer). Updating here as well double-updates it,
+    // corrupts FTQ-based predictors (e.g. TAGE), and pollutes simpler ones
+    // with speculative outcomes.
 
     // Update the branch instruction counter
     branchesExecuted_++;

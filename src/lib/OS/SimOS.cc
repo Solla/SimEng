@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <iomanip>
+#include <time.h>
 
 #include "simeng/OS/Constants.hh"
 #include "simeng/OS/Process.hh"
@@ -450,10 +451,10 @@ void SimOS::createSpecialFileDirectory() const {
 }
 
 uint64_t SimOS::getSystemTimer() const {
-  // TODO: This will need to be changed if we start supporting DVFS (Dynamic
-  // voltage and frequency scaling).
-  return ticks_ /
-         ((Config::get()["Core"]["Clock-Frequency"].as<float>() * 1e9) / 1e9);
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
+         static_cast<uint64_t>(ts.tv_nsec);
 }
 
 void SimOS::receiveSyscall(SyscallInfo syscallInfo) const {

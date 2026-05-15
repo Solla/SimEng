@@ -121,8 +121,6 @@ uint64_t PageTable::translate(uint64_t vaddr) {
   TableItr entry = find(vaddr);
   if (entry == table_.end()) {
     if (vaddr >= ignoredAddrRange_.first && vaddr < ignoredAddrRange_.second) {
-      std::cout << "Ignored addr: " << vaddr << " - 0x" << std::hex << vaddr
-                << std::dec << std::endl;
       return masks::faults::pagetable::FAULT |
              masks::faults::pagetable::IGNORED;
     }

@@ -1,4 +1,12 @@
 cmake_minimum_required(VERSION 3.13)
+
+if(MSVC OR CMAKE_GENERATOR MATCHES "Visual Studio")
+    message(FATAL_ERROR
+        "SimEng must be built inside the simeng-dev Docker image (Linux/gcc/Ninja). "
+        "MSVC / Visual Studio generators are not supported. "
+        "See CLAUDE.md at the repo root.")
+endif()
+
 include(FetchContent)
 include(CheckCXXCompilerFlag)
 include(ProcessorCount)

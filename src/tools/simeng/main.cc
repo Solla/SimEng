@@ -1,11 +1,14 @@
 #include <chrono>
 #include <cmath>
+#include <csignal>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <string>
 #include <tuple>
 
 #include "simeng/Config.hh"
+#include "simeng/config/SimInfo.hh"
 #include "simeng/Core.hh"
 #include "simeng/CoreInstance.hh"
 #include "simeng/MemoryInterface.hh"
@@ -13,50 +16,88 @@
 #include "simeng/memory/SimpleMem.hh"
 #include "simeng/version.hh"
 
+// Global pointers for signal handler to access simulation state.
+static simeng::Core* g_core = nullptr;
+static std::chrono::high_resolution_clock::time_point g_startTime;
+static volatile sig_atomic_t g_interrupted = 0;
+
+static void printStats(int /*sig*/) {
+  g_interrupted = 1;
+}
+
+static void flushStats() {
+  if (!g_core) return;
+  auto endTime = std::chrono::high_resolution_clock::now();
+  auto duration =
+      std::chrono::duration_cast<std::chrono::milliseconds>(endTime - g_startTime)
+          .count();
+  uint64_t retired = g_core->getInstructionsRetiredCount();
+  auto stats = g_core->getStats();
+  double khz = 0.0, mips = 0.0;
+  if (duration > 0) {
+    long long cycles = 0;
+    auto it = stats.find("cycles");
+    if (it != stats.end()) cycles = std::stoll(it->second);
+    khz = (cycles / (static_cast<double>(duration) / 1000.0)) / 1000.0;
+    mips = (retired / (static_cast<double>(duration))) / 1000.0;
+  }
+  std::cout << std::endl;
+  for (const auto& [key, value] : stats) {
+    std::cout << "[SimEng] " << key << ": " << value << std::endl;
+  }
+  std::cout << std::endl;
+  std::cout << "[SimEng] Interrupted after " << (duration / 1000.0)
+            << "s (" << std::round(khz) << " kHz, "
+            << std::setprecision(2) << mips << " MIPS)" << std::endl;
+  std::cout.flush();
+}
+
 /** Create a SimOS object depending on whether a binary file was specified. */
 simeng::OS::SimOS simOsFactory(std::shared_ptr<simeng::memory::Mem> memory,
                                std::string executablePath,
                                std::vector<std::string> executableArgs) {
   if (executablePath == DEFAULT_STR) {
-    // Use default program
     simeng::span<char> defaultPrg = simeng::span<char>(
         reinterpret_cast<char*>(simeng::OS::hex_), sizeof(simeng::OS::hex_));
     return simeng::OS::SimOS(memory, defaultPrg);
   }
-  // Try to use binary specified in runtime args
   return simeng::OS::SimOS(memory, executablePath, executableArgs);
 }
 
-/** Tick the provided core model until it halts. */
+/** Tick the provided core model until it halts, a signal is received, or
+ *  max_seconds of wall time have elapsed (0 = unlimited). */
 int simulate(simeng::OS::SimOS& simOS, simeng::Core& core,
              simeng::MemoryInterface& dataMemory,
-             simeng::MemoryInterface& instructionMemory) {
+             simeng::MemoryInterface& instructionMemory,
+             double max_seconds = 0.0) {
   uint64_t iterations = 0;
+  // Check time every 100k cycles to keep overhead low.
+  const uint64_t check_interval = 100000;
+  auto deadline = g_startTime;
+  bool limited = (max_seconds > 0.0);
+  if (limited)
+    deadline = g_startTime +
+               std::chrono::duration_cast<std::chrono::high_resolution_clock::duration>(
+                   std::chrono::duration<double>(max_seconds));
 
-  // Tick the core and memory interfaces until the program has halted
   while (!simOS.hasHalted() || dataMemory.hasPendingRequests()) {
-    // Tick SimOS
-    std::cout << "  Ticking SimOS..." << std::endl;
+    if (g_interrupted) break;
     simOS.tick();
-
-    // Tick the core
-    std::cout << "Cycle " << iterations << " | PC: 0x" << std::hex << core.getCurrentContext().pc << std::dec << std::endl;
-    std::cout << "  Ticking Core..." << std::endl;
     core.tick();
-
-    // Tick memory
-    std::cout << "  Ticking Memory..." << std::endl;
     instructionMemory.tick();
     dataMemory.tick();
-
     iterations++;
+    if (limited && (iterations % check_interval == 0)) {
+      if (std::chrono::high_resolution_clock::now() >= deadline) {
+        g_interrupted = 1;
+        break;
+      }
+    }
   }
-
   return iterations;
 }
 
 int main(int argc, char** argv) {
-  // Print out build metadata
   std::cout << "[SimEng] Build metadata:" << std::endl;
   std::cout << "[SimEng] \tVersion: " SIMENG_VERSION << std::endl;
   std::cout << "[SimEng] \tCompile Time - Date: " __TIME__ " - " __DATE__
@@ -67,21 +108,15 @@ int main(int argc, char** argv) {
   std::cout << "[SimEng] \tTest suite: " SIMENG_ENABLE_TESTS << std::endl;
   std::cout << std::endl;
 
-  // Parse command line args
   std::string executablePath = DEFAULT_STR;
   std::vector<std::string> executableArgs;
-  // Determine if a config file has been supplied.
   if (argc > 1) {
-    // Set global config file to one at file path defined
     std::cout << "[SimEng] Loading config: " << argv[1] << std::endl;
     Config::set(std::string(argv[1]));
+    simeng::config::SimInfo::setConfig(std::string(argv[1]));
     std::cout << "[SimEng] Config loaded." << std::endl;
-
-    // Determine if an executable has been supplied
     if (argc > 2) {
       executablePath = std::string(argv[2]);
-      // Create a vector of any potential executable arguments from their
-      // relative position within the argv variable
       char** startOfArgs = argv + 3;
       int numberofArgs = argc - 3;
       executableArgs =
@@ -89,43 +124,31 @@ int main(int argc, char** argv) {
     }
   }
 
-  // Get the memory size from the YAML config file.
   const size_t memorySize =
       Config::get()["Simulation-Memory"]["Size"].as<size_t>();
-
-  // Create the simulation memory.
   std::shared_ptr<simeng::memory::Mem> memory =
       std::make_shared<simeng::memory::SimpleMem>(memorySize);
 
-  // Create the instance of the lightweight Operating system
   std::cout << "[SimEng] Creating SimOS..." << std::endl;
   simeng::OS::SimOS OS = simOsFactory(memory, executablePath, executableArgs);
   std::cout << "[SimEng] SimOS created." << std::endl;
 
-  // Retrieve the virtual address translation function from SimOS and pass it to
-  // the MMU. This function will be used to handle all virtual address
-  // translations after a TLB miss.
   VAddrTranslator fn = OS.getVAddrTranslator();
-
   std::shared_ptr<simeng::memory::MMU> mmu =
       std::make_shared<simeng::memory::MMU>(memory, fn, 0);
 
-  // Create the instance of the core to be simulated
   std::unique_ptr<simeng::CoreInstance> coreInstance =
       std::make_unique<simeng::CoreInstance>(memory, mmu,
                                              OS.getSyscallReceiver());
 
-  // Get simulation objects needed to forward simulation
   std::shared_ptr<simeng::Core> core = coreInstance->getCore();
   std::shared_ptr<simeng::MemoryInterface> dataMemory =
       coreInstance->getDataMemory();
   std::shared_ptr<simeng::MemoryInterface> instructionMemory =
       coreInstance->getInstructionMemory();
 
-  // Register core with SimOS
   OS.registerCore(core);
 
-  // Output general simulation details
   std::cout << "[SimEng] Running in " << coreInstance->getSimulationModeString()
             << " mode" << std::endl;
   std::cout << "[SimEng] Workload: " << executablePath;
@@ -133,22 +156,32 @@ int main(int argc, char** argv) {
   std::cout << std::endl;
   std::cout << "[SimEng] Config file: " << Config::getPath() << std::endl;
 
-  // Run simulation
-  std::cout << "[SimEng] Starting...\n" << std::endl;
-  int iterations = 0;
-  auto startTime = std::chrono::high_resolution_clock::now();
-  iterations = simulate(OS, *core, *dataMemory, *instructionMemory);
+  // Install signal handlers so stats are printed on timeout/ctrl-c.
+  g_core = core.get();
+  std::signal(SIGTERM, printStats);
+  std::signal(SIGINT, printStats);
 
-  // Get timing information
+  double max_seconds = 0.0;
+  const char* ms_env = std::getenv("SIMENG_MAX_SECONDS");
+  if (ms_env) max_seconds = std::atof(ms_env);
+
+  std::cout << "[SimEng] Starting...\n" << std::endl;
+  g_startTime = std::chrono::high_resolution_clock::now();
+  int iterations = simulate(OS, *core, *dataMemory, *instructionMemory, max_seconds);
+
+  if (g_interrupted) {
+    flushStats();
+    return 0;
+  }
+
   auto endTime = std::chrono::high_resolution_clock::now();
   auto duration =
-      std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime)
+      std::chrono::duration_cast<std::chrono::milliseconds>(endTime - g_startTime)
           .count();
   double khz = (iterations / (static_cast<double>(duration) / 1000.0)) / 1000.0;
   uint64_t retired = core->getInstructionsRetiredCount();
   double mips = (retired / (static_cast<double>(duration))) / 1000.0;
 
-  // Print stats
   std::cout << std::endl;
   auto stats = core->getStats();
   for (const auto& [key, value] : stats) {
@@ -159,11 +192,7 @@ int main(int argc, char** argv) {
             << "ms (" << std::round(khz) << " kHz, " << std::setprecision(2)
             << mips << " MIPS)" << std::endl;
 
-// Print build metadata and core statistics in YAML format
-// to facilitate parsing. Print "YAML-SEQ" to indicate beginning
-// of YAML formatted data.
 #ifdef YAML_OUTPUT
-
   YAML::Emitter out;
   out << YAML::BeginDoc << YAML::BeginMap;
   out << YAML::Key << "build metadata" << YAML::Value;
@@ -185,7 +214,6 @@ int main(int argc, char** argv) {
 
   std::cout << "YAML-SEQ\n";
   std::cout << out.c_str() << std::endl;
-
 #endif
 
   return 0;

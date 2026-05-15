@@ -74,6 +74,7 @@ void DispatchIssueUnit::tick() {
     }
 
     const std::vector<uint16_t>& supportedPorts = uop->getSupportedPorts();
+
     if (uop->exceptionEncountered()) {
       // Exception; mark as ready to commit, and remove from pipeline
       uop->setCommitReady();

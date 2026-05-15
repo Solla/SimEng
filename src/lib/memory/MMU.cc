@@ -21,8 +21,6 @@ void MMU::bufferRequest(
   DataPacket pkt;
 
   if (faultCode == simeng::OS::masks::faults::pagetable::DATA_ABORT) {
-    std::cout << "DATA_ABORT addr: " << request.address_ << " - 0x" << std::hex
-              << request.address_ << std::dec << std::endl;
     pkt = DataPacket(true);
   } else if (faultCode == simeng::OS::masks::faults::pagetable::IGNORED) {
     pkt = memory_->handleIgnoredRequest(request);

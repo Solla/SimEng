@@ -25,7 +25,9 @@ bool ExceptionHandler::tick() {
   // the simulated Operating System's syscall handler, conclude the syscall only
   // once the result has been returned
   if (invokingSycallHandler_) {
-    if (!syscallReturned_) return false;
+    if (!syscallReturned_) {
+      return false;
+    }
     return concludeSyscall();
   }
 

@@ -124,6 +124,16 @@ class Core : public simeng::Core {
   /** A reference to the core's architecture. */
   const arch::Architecture& isa_;
 
+  /** A reference to the core's branch predictor. Used to rewind speculative
+   * predictions for branches squashed in the front-end pipeline buffers (the
+   * reorder buffer only rewinds branches that reached it). */
+  BranchPredictor& branchPredictor_;
+
+  /** Rewind the branch predictor for every branch still sitting in a
+   * front-end pipeline buffer (these had predict() called but will never
+   * reach the reorder buffer to be update()d or flush()ed). */
+  void flushFrontEndPredictions(bool includeDecodeRename);
+
   /** The layout of the physical register file sets. */
   const std::vector<simeng::RegisterFileStructure> physicalRegisterStructures_;
 
