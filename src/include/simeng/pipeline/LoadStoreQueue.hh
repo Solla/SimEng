@@ -5,6 +5,8 @@
 #include <map>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 #include "simeng/Instruction.hh"
 #include "simeng/memory/MemoryInterface.hh"
@@ -75,8 +77,27 @@ class LoadStoreQueue {
   /** Add a store uop to the queue. */
   void addStore(const std::shared_ptr<Instruction>& insn);
 
-  /** Add the load instruction's memory requests to the requestQueue_. */
+  /** Add the load instruction's memory requests to the requestQueue_. A load
+   * whose instruction address has previously caused a memory-order violation
+   * (memory-dependence prediction) is held until it can no longer alias an
+   * older in-flight store; otherwise it is issued immediately. */
   void startLoad(const std::shared_ptr<Instruction>& insn);
+
+  /** Perform conflict detection and queue the load's memory requests. */
+  void issueLoad(const std::shared_ptr<Instruction>& insn);
+
+  /** True if `load` still has a memory-ordering hazard against an older store
+   * in the store queue: an older store with an unresolved address, or an
+   * older store whose resolved address overlaps the load but is not exactly
+   * store-to-load forwardable (wider load / partial overlap). */
+  bool olderStoreHazard(const std::shared_ptr<Instruction>& load) const;
+
+  /** True if load `loadSeqId` is currently held in conflictionMap_ for an
+   * address overlapping `loadReq`. Such a load is awaiting store-to-load
+   * forwarding and never issued a memory read for that address, so it cannot
+   * be a memory-order violation against a committing store. */
+  bool loadHeldOnAddr(uint64_t loadSeqId,
+                      const memory::MemoryAccessTarget& loadReq) const;
 
   /** Supply the data to be stored by a store operation. */
   void supplyStoreData(const std::shared_ptr<Instruction>& insn);
@@ -157,6 +178,18 @@ class LoadStoreQueue {
 
   /** The number of times this unit has been ticked. */
   uint64_t tickCounter_ = 0;
+
+  /** Memory-dependence predictor: instruction addresses of loads that have
+   * caused a memory-order violation. Such loads are conservatively held (see
+   * startLoad) on subsequent executions until they can no longer alias an
+   * older in-flight store, preventing an unbounded violation/flush storm on
+   * RAW-through-memory hazards in tight loops, while a load's first execution
+   * still issues speculatively (preserving baseline violation behaviour). */
+  std::unordered_set<uint64_t> memDepViolatorPCs_;
+
+  /** Loads held by the memory-dependence predictor, re-evaluated each tick()
+   * and released to issueLoad() once they no longer hazard an older store. */
+  std::vector<std::shared_ptr<Instruction>> pendingDisambiguation_;
 
   /** A map to hold load instructions that are stalled due to a detected
    * memory reordering confliction. First key is a store's sequence id and the
