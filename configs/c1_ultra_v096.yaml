@@ -1,4 +1,4 @@
-# C1 Ultra (Apple Silicon) core
+# C1-Ultra core (Arm-licensed IP core; NOT an Apple Silicon CPU)
 Core:
   ISA: AArch64
   Simulation-Mode: outoforder
@@ -97,6 +97,7 @@ Ports:
     Portname: INT_S5
     Instruction-Support:
       - INT_SIMPLE
+      - INT_MUL
   9:
     Portname: INT_M0
     Instruction-Support:
@@ -145,6 +146,7 @@ Ports:
       - FP
       - VECTOR
       - SCALAR
+      - FP_DIV_OR_SQRT
   19:
     Portname: V2
     Instruction-Support:
@@ -172,14 +174,14 @@ Ports:
 Reservation-Stations:
   0:
     Size: 24
-    Dispatch-Rate: 10
+    Dispatch-Rate: 3
     Ports:
       - Branch0
       - Branch1
       - Branch2
   1:
     Size: 32
-    Dispatch-Rate: 10
+    Dispatch-Rate: 8
     Ports:
       - INT_S0
       - INT_S1
@@ -191,7 +193,7 @@ Reservation-Stations:
       - INT_M1
   2:
     Size: 48
-    Dispatch-Rate: 10
+    Dispatch-Rate: 6
     Ports:
       - LS0
       - LS1
@@ -201,7 +203,7 @@ Reservation-Stations:
       - D1
   3:
     Size: 64
-    Dispatch-Rate: 10
+    Dispatch-Rate: 6
     Ports:
       - V0
       - V1
@@ -260,7 +262,6 @@ Latencies:
   0:
     Instruction-Groups:
       - INT_SIMPLE
-      - BRANCH
     Execution-Latency: 1
     Execution-Throughput: 1
   1:
@@ -289,6 +290,11 @@ Latencies:
     Instruction-Groups:
       - STORE
     Execution-Latency: 1
+    Execution-Throughput: 1
+  6:
+    Instruction-Groups:
+      - BRANCH
+    Execution-Latency: 2
     Execution-Throughput: 1
 CPU-Info:
   Generate-Special-Dir: True
