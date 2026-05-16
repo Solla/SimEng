@@ -17,9 +17,15 @@
 #include <vector>
 
 #include "SimEngMemInterface.hh"
+#include "simeng/Config.hh"
 #include "simeng/Core.hh"
 #include "simeng/CoreInstance.hh"
 #include "simeng/SpecialFileDirGen.hh"
+#include "simeng/config/SimInfo.hh"
+#include "simeng/OS/SimOS.hh"
+#include "simeng/memory/MMU.hh"
+#include "simeng/memory/Mem.hh"
+#include "simeng/memory/SimpleMem.hh"
 #include "simeng/version.hh"
 
 using namespace SST;
@@ -177,6 +183,21 @@ class SimEngCoreWrapper : public SST::Component {
   StandardMem* sstMem_;
 
   // SimEng properties
+  /** The unified simulation memory (functional source of truth: process
+   * image, page tables, syscall buffers). Built here exactly as
+   * src/tools/simeng/main.cc does, since post-SimOS the SST memHierarchy
+   * cannot own the process image. */
+  std::shared_ptr<simeng::memory::Mem> memory_;
+
+  /** The simulated OS kernel. Owns the process image / page tables and
+   * services syscalls; ticked alongside the core. */
+  std::unique_ptr<simeng::OS::SimOS> os_;
+
+  /** The MMU bridging the core's memory interfaces to `memory_` (virtual
+   * address translation + lazy page-fault handling). Shared with the
+   * SST-backed L1 data interface so it can service accesses functionally. */
+  std::shared_ptr<simeng::memory::MMU> mmu_;
+
   /** Reference to the CoreInstance class responsible for creating the core to
    * be simulated. */
   std::unique_ptr<simeng::CoreInstance> coreInstance_;
@@ -229,6 +250,10 @@ class SimEngCoreWrapper : public SST::Component {
 
   /** Variable to enable parseable print debug statements in test mode. */
   bool debug_ = false;
+
+  /** Wall-clock cap in seconds (0 = unlimited). Set from the "max_seconds"
+   * component param or the SIMENG_MAX_SECONDS env var; mirrors main.cc. */
+  double maxSeconds_ = 0.0;
 
   /** Path to A64fx model config. */
   const std::string a64fxConfigPath_ =

@@ -32,6 +32,17 @@ SimEngCoreWrapper::SimEngCoreWrapper(SST::ComponentId_t id, SST::Params& params)
   heapStr_ = params.find<std::string>("heap", "");
   debug_ = params.find<bool>("debug", false);
 
+  // Optional wall-clock cap, mirroring src/tools/simeng/main.cc's
+  // SIMENG_MAX_SECONDS. Many SimEng benchmark binaries (Dhrystone here) loop
+  // on a very large run count and are measured at a time cap rather than at
+  // program completion; without this the SST simulation never prints stats.
+  // A "max_seconds" component param takes precedence over the env var.
+  maxSeconds_ = params.find<double>("max_seconds", 0.0);
+  if (maxSeconds_ <= 0.0) {
+    const char* ms = std::getenv("SIMENG_MAX_SECONDS");
+    if (ms) maxSeconds_ = std::atof(ms);
+  }
+
   if (executablePath_.length() == 0 && !assembleWithSource_) {
     output_.verbose(CALL_INFO, 10, 0,
                     "SimEng executable binary filepath not provided.");
@@ -45,16 +56,15 @@ SimEngCoreWrapper::SimEngCoreWrapper(SST::ComponentId_t id, SST::Params& params)
 
   iterations_ = 0;
 
-  // Instantiate the StandardMem Interface defined in config.py
+  // Instantiate the StandardMem Interface defined in config.py. The
+  // SimEngMemInterface and its response handler are constructed later in
+  // fabricateSimEngCore(), once the MMU exists (it now needs the MMU to
+  // service accesses functionally). This is safe because StandardMem
+  // responses only arrive during clockTick(), after init().
   sstMem_ = loadUserSubComponent<SST::Interfaces::StandardMem>(
       "memory", ComponentInfo::SHARE_NONE, clock_,
       new StandardMem::Handler<SimEngCoreWrapper>(
           this, &SimEngCoreWrapper::handleMemoryEvent));
-
-  dataMemory_ = std::make_shared<SimEngMemInterface>(sstMem_, cacheLineWidth_,
-                                                     maxAddrMemory_, debug_);
-
-  handlers_ = new SimEngMemInterface::SimEngMemHandlers(*dataMemory_, &output_);
 
   // Protected methods from SST::Component used to start simulation
   registerAsPrimaryComponent();
@@ -109,10 +119,11 @@ void SimEngCoreWrapper::init(unsigned int phase) {
 }
 
 bool SimEngCoreWrapper::clockTick(SST::Cycle_t current_cycle) {
-  // Tick the core and memory interfaces until the program has halted
-  if (!core_->hasHalted() || dataMemory_->hasPendingRequests()) {
-    // Tick the data memory.
-    dataMemory_->tick();
+  // Tick SimOS, the core and the memory interfaces until the program has
+  // halted, mirroring the simulate() loop in src/tools/simeng/main.cc.
+  if (!os_->hasHalted() || dataMemory_->hasPendingRequests()) {
+    // Tick the OS kernel (scheduling, syscalls, page faults).
+    os_->tick();
 
     // Tick the core.
     core_->tick();
@@ -120,7 +131,37 @@ bool SimEngCoreWrapper::clockTick(SST::Cycle_t current_cycle) {
     // Tick the instruction memory.
     instructionMemory_->tick();
 
+    // Tick the data memory.
+    dataMemory_->tick();
+
     iterations_++;
+
+    // Periodic heartbeat + wall-clock cap check (cheap: every 100k cycles).
+    if ((iterations_ % 100000) == 0) {
+      if (debug_ && (iterations_ % 2000000) == 0) {
+        std::cerr << "[SSTSimEng] heartbeat: cycle " << iterations_
+                  << " retired " << core_->getInstructionsRetiredCount()
+                  << " dMemPending " << dataMemory_->hasPendingRequests()
+                  << std::endl;
+      }
+      if (maxSeconds_ > 0.0) {
+        auto now = std::chrono::high_resolution_clock::now();
+        double elapsed =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now -
+                                                                  startTime_)
+                .count() /
+            1000.0;
+        if (elapsed >= maxSeconds_) {
+          std::cout << "\n[SimEng] Reached SIMENG_MAX_SECONDS (" << maxSeconds_
+                    << "s) at cycle " << iterations_ << " — ending simulation."
+                    << std::endl;
+          // End the SST simulation cleanly; SST then calls finish() (SimEng
+          // stats) and emits the enabled L1/L2 cache statistics.
+          primaryComponentOKToEndSim();
+          return true;
+        }
+      }
+    }
 
     return false;
   } else {
@@ -242,7 +283,7 @@ std::vector<std::string> SimEngCoreWrapper::splitArgs(std::string strArgs) {
 }
 
 void SimEngCoreWrapper::initialiseHeapData() {
-  std::vector<uint8_t> initialHeapData;
+  std::vector<char> initialHeapData;
   std::vector<uint64_t> heapVals = splitHeapStr();
   uint64_t heapSize = heapVals.size() * 8;
   initialHeapData.resize(heapSize);
@@ -250,9 +291,15 @@ void SimEngCoreWrapper::initialiseHeapData() {
   for (size_t x = 0; x < heapVals.size(); x++) {
     heap[x] = heapVals[x];
   }
-  uint64_t heapStart = coreInstance_->getHeapStart();
-  std::copy(initialHeapData.begin(), initialHeapData.end(),
-            coreInstance_->getProcessImage().get() + heapStart);
+  // Post-SimOS the process image lives in `memory_` and is addressed
+  // virtually. Translate the heap start through the OS page table and write
+  // the test data untimed, directly into simulation memory.
+  uint64_t heapStart = os_->getProcess(1)->getHeapStart();
+  uint64_t paddr = os_->handleVAddrTranslation(heapStart, 1);
+  if (simeng::OS::masks::faults::getFaultCode(paddr) ==
+      simeng::OS::masks::faults::pagetable::NO_FAULT) {
+    memory_->sendUntimedData(initialHeapData, paddr, heapSize);
+  }
 }
 
 void SimEngCoreWrapper::fabricateSimEngCore() {
@@ -266,53 +313,80 @@ void SimEngCoreWrapper::fabricateSimEngCore() {
     assembled_source = assemble.getAssembledSource();
     assembled_source_size = assemble.getAssembledSourceSize();
   }
-  if (simengConfigPath_ != "") {
-    // Set the global config file to one at the file path defined
-    simeng::config::SimInfo::setConfig(simengConfigPath_);
-
-    coreInstance_ = assembleWithSource_
-                        ? std::make_unique<simeng::CoreInstance>(
-                              assembled_source, assembled_source_size)
-                        : std::make_unique<simeng::CoreInstance>(
-                              executablePath_, executableArgs_);
-  } else {
+  // Select and load the model configuration. Post-SimOS, both the legacy
+  // yaml-cpp `Config` (read by CoreInstance) and the newer ryml `SimInfo`
+  // must be populated, exactly as src/tools/simeng/main.cc does.
+  std::string configPath = simengConfigPath_;
+  if (configPath == "") {
     output_.verbose(CALL_INFO, 1, 0,
                     "No SimEng configuration provided. Using the default "
                     "a64fx-sst.yaml configuration file.\n");
-    // Set the global config file to the default a64fx-sst.yaml file
-    simeng::config::SimInfo::setConfig(a64fxConfigPath_);
-
-    coreInstance_ = assembleWithSource_
-                        ? std::make_unique<simeng::CoreInstance>(
-                              assembled_source, assembled_source_size)
-                        : std::make_unique<simeng::CoreInstance>(
-                              executablePath_, executableArgs_);
+    configPath = a64fxConfigPath_;
   }
+  Config::set(configPath);
+  simeng::config::SimInfo::setConfig(configPath);
+
+  // SST integration requires the L1 data interface to be External so that
+  // the SST-backed SimEngMemInterface can be injected. Force it here rather
+  // than depending on the YAML, so the tuned standalone config
+  // (c1_ultra_v096.yaml) can be reused unchanged under SST.
+  Config::get()["L1-Data-Memory"]["Interface-Type"] = "External";
+
   if (config::SimInfo::getSimMode() != config::SimulationMode::Outoforder) {
     output_.verbose(CALL_INFO, 1, 0,
                     "SimEng currently only supports Out-of-Order "
                     "archetypes with SST.");
     std::exit(EXIT_FAILURE);
   }
-  // Set the SST data memory SimEng should use
-  coreInstance_->setL1DataMemory(dataMemory_);
 
-  // Construct core
+  // Build the SimOS stack exactly as main.cc's simulate path does:
+  //   SimpleMem -> SimOS -> MMU -> CoreInstance.
+  // SST does not replace SimOS; it replaces only the *timing* of the L1
+  // data path. SimpleMem remains the functional source of truth (process
+  // image, page tables, syscall buffers, instruction fetch).
+  const size_t memorySize =
+      Config::get()["Simulation-Memory"]["Size"].as<size_t>();
+  memory_ = std::make_shared<simeng::memory::SimpleMem>(memorySize);
+
+  if (assembleWithSource_) {
+    simeng::span<char> instrBytes(reinterpret_cast<char*>(assembled_source),
+                                  assembled_source_size);
+    os_ = std::make_unique<simeng::OS::SimOS>(memory_, instrBytes);
+  } else {
+    os_ = std::make_unique<simeng::OS::SimOS>(memory_, executablePath_,
+                                              executableArgs_);
+  }
+
+  VAddrTranslator translator = os_->getVAddrTranslator();
+  mmu_ = std::make_shared<simeng::memory::MMU>(memory_, translator, 0);
+
+  // The SST-backed L1 data interface: functional access via the MMU,
+  // timing via the SST cache hierarchy.
+  dataMemory_ = std::make_shared<SimEngMemInterface>(
+      sstMem_, mmu_, cacheLineWidth_, maxAddrMemory_, debug_);
+  handlers_ = new SimEngMemInterface::SimEngMemHandlers(*dataMemory_, &output_);
+
+  coreInstance_ = std::make_unique<simeng::CoreInstance>(
+      memory_, mmu_, os_->getSyscallReceiver());
+
+  // Set the SST-backed data memory and construct the core (L1-Data-Memory
+  // is External, so CoreInstance deferred core creation to here).
+  coreInstance_->setL1DataMemory(dataMemory_);
   coreInstance_->createCore();
 
   // Get remaining simulation objects needed to forward simulation
   core_ = coreInstance_->getCore();
   instructionMemory_ = coreInstance_->getInstructionMemory();
+  os_->registerCore(core_);
 
-  // This check ensures that SST has enough memory to store the entire
-  // processImage constructed by SimEng.
-  if (maxAddrMemory_ < coreInstance_->getProcessImageSize()) {
+  // Ensure the SST backend can hold the whole simulation memory.
+  if (maxAddrMemory_ < memorySize) {
     output_.verbose(
         CALL_INFO, 1, 0,
-        "Error: SST backend memory is less than processImage size. "
-        "Please increase the memory allocated to memHierarchy.memBackend and "
-        "ensure it is consistent with \'max_addr_memory\' and "
-        "\'addr_range_end\'. \n");
+        "Error: SST backend memory is smaller than the SimEng simulation "
+        "memory. Increase the memory allocated to memHierarchy.memBackend "
+        "and keep it consistent with \'max_addr_memory\' / "
+        "\'addr_range_end\'.\n");
     primaryComponentOKToEndSim();
     std::exit(EXIT_FAILURE);
   }
@@ -322,9 +396,6 @@ void SimEngCoreWrapper::fabricateSimEngCore() {
     initialiseHeapData();
   }
 #endif
-  // Send the process image data over to the SST memory
-  dataMemory_->sendProcessImageToSST(coreInstance_->getProcessImage().get(),
-                                     coreInstance_->getProcessImageSize());
 
   output_.verbose(CALL_INFO, 1, 0, "SimEng core setup successfully.\n");
   // Print out build metadata

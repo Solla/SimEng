@@ -16,6 +16,8 @@
 #include <type_traits>
 #include <vector>
 
+#include "simeng/memory/MMU.hh"
+#include "simeng/memory/Mem.hh"
 #include "simeng/memory/MemoryInterface.hh"
 #include "simeng/span.hh"
 
@@ -29,11 +31,22 @@ namespace SSTSimEng {
 /** A memory interface used by SimEng to communicate with SST's memory model. */
 class SimEngMemInterface : public memory::MemoryInterface {
  public:
-  SimEngMemInterface(StandardMem* mem, uint64_t cl, uint64_t max_addr,
-                     bool debug);
-  /** Send SimEng's processImage to SST memory backend during `init` lifecycle
-   * phase of SST. */
-  void sendProcessImageToSST(char* image, uint64_t size);
+  /** Construct the SST-backed L1 data interface.
+   *
+   * Post-SimOS, the process image / page tables are owned by `memory::Mem`
+   * and addressed virtually. SST's flat memHierarchy backend cannot be the
+   * functional source of truth (it would bypass paging, lazy page-faults and
+   * syscall buffers, and `Mem::requestAccess` is synchronous whereas SST is
+   * event-driven). This interface therefore performs every access
+   * functionally and synchronously through the supplied `mmu` (translation +
+   * SimpleMem), and issues a parallel SST request at the *translated physical
+   * address* purely to model L1/L2 cache-miss latency. The functionally
+   * correct bytes are delivered to the core only once SST's timed response
+   * returns, so the core observes real cache latency without any correctness
+   * risk. */
+  SimEngMemInterface(StandardMem* mem,
+                     std::shared_ptr<simeng::memory::MMU> mmu, uint64_t cl,
+                     uint64_t max_addr, bool debug);
 
   /**
    * Construct an AggregatedReadRequest and use it to generate
@@ -148,6 +161,10 @@ class SimEngMemInterface : public memory::MemoryInterface {
     std::map<uint64_t, std::vector<uint8_t>> responseMap_;
     /** Total number of SST request the SimEng memory request was split into. */
     int aggregateCount_ = 0;
+    /** The functionally-correct bytes for this read, obtained synchronously
+     * from the MMU/SimpleMem path at request time. SST responses are used
+     * only for timing; this is the data actually delivered to the core. */
+    std::vector<char> funcData_;
 
     AggregateReadRequest() : SimEngMemoryRequest(), id_(0){};
     AggregateReadRequest(const memory::MemoryAccessTarget& target,
@@ -162,6 +179,11 @@ class SimEngMemInterface : public memory::MemoryInterface {
    * down the memory heirarchy.
    */
   StandardMem* sstMem_;
+
+  /** The MMU used for functional access + virtual address translation. Every
+   * SimEng request is serviced functionally through this synchronously; the
+   * SST request is issued at the translated physical address for timing. */
+  std::shared_ptr<simeng::memory::MMU> mmu_;
 
   /** Counter for clock ticks. */
   uint64_t tickCounter_ = 0;
@@ -240,6 +262,13 @@ class SimEngMemInterface : public memory::MemoryInterface {
 
   /** Variable to enable parseable print debug statements in test mode. */
   bool debug_ = false;
+
+  /** Diagnostic counters for verifying the data path actually flows through
+   * the SST cache hierarchy. */
+  uint64_t dbgReads_ = 0;
+  uint64_t dbgWrites_ = 0;
+  uint64_t dbgFaults_ = 0;
+  uint64_t dbgSstSends_ = 0;
 };
 
 };  // namespace SSTSimEng

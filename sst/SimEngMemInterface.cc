@@ -9,26 +9,16 @@
 
 using namespace SST::SSTSimEng;
 
-SimEngMemInterface::SimEngMemInterface(StandardMem* mem, uint64_t cl,
-                                       uint64_t max_addr, bool debug)
+SimEngMemInterface::SimEngMemInterface(StandardMem* mem,
+                                       std::shared_ptr<simeng::memory::MMU> mmu,
+                                       uint64_t cl, uint64_t max_addr,
+                                       bool debug)
     : simeng::memory::MemoryInterface() {
   this->sstMem_ = mem;
+  this->mmu_ = mmu;
   this->cacheLineWidth_ = cl;
   this->maxAddrMemory_ = max_addr;
   this->debug_ = debug;
-};
-
-void SimEngMemInterface::sendProcessImageToSST(char* image, uint64_t size) {
-  std::vector<uint8_t> data;
-  data.reserve(size);
-
-  for (uint64_t i = 0; i < size; i++) {
-    data.push_back((uint8_t)image[i]);
-  }
-
-  StandardMem::Request* req = new StandardMem::Write(0, data.size(), data);
-  sstMem_->sendUntimedData(req);
-  return;
 };
 
 template <typename T,
@@ -76,38 +66,24 @@ std::vector<StandardMem::Request*> SimEngMemInterface::makeSSTRequests(
 std::vector<StandardMem::Request*> SimEngMemInterface::splitAggregatedRequest(
     AggregateWriteRequest* aggrReq, uint64_t addrStart, uint64_t size) {
   std::vector<StandardMem::Request*> requests;
-  uint64_t dataIndex = 0;
-  // Determine the number of cache-lines needed to store the data in the write
-  // request
+  // Determine the number of cache-lines this store touches.
   int numCacheLinesNeeded = getNumCacheLinesNeeded(size);
-  /*
-      This check here increments the data index to a value indexing the portion
-     of data which succeeds the portion data already copied incase the request
-     spans multiple cache-lines. In reference to the diagram above, this check
-     will succeed only for cache-line 2.
-  */
-  if (addrStart > aggrReq->target.address) {
-    dataIndex += addrStart - aggrReq->target.address;
-  }
-  // Loop used to divide a write request from SimEng based on cache-line size.
+  // The write has already been applied functionally to SimpleMem; the SST
+  // store exists purely to drive cache occupancy/coherence timing, so the
+  // payload bytes are irrelevant. Emit correctly-sized zero payloads at the
+  // physical address. This also avoids slicing `aggrReq->data` by a
+  // (physical addrStart - virtual target.address) delta, which would be
+  // meaningless post-SimOS.
   for (int x = 0; x < numCacheLinesNeeded; x++) {
     uint64_t currReqSize = size;
     if (size > cacheLineWidth_) {
       size -= cacheLineWidth_;
       currReqSize = cacheLineWidth_;
     }
-    // SST write requests accept uint8_t vectors as data.
-    std::vector<uint8_t> payload;
-    payload.resize(currReqSize);
-
-    // Fill the payload vector currReqSize number of bytes starting
-    // and inclusive of the dataIndex.
-    const char* data = aggrReq->data.getAsVector<char>();
-    memcpy((void*)&payload[0], &(data[dataIndex]), currReqSize);
+    std::vector<uint8_t> payload(currReqSize, 0);
     StandardMem::Request* writeReq =
         new StandardMem::Write(addrStart, currReqSize, payload);
 
-    dataIndex += currReqSize;
     addrStart += currReqSize;
     requests.push_back(writeReq);
   }
@@ -151,22 +127,39 @@ std::vector<StandardMem::Request*> SimEngMemInterface::splitAggregatedRequest(
 
 void SimEngMemInterface::requestRead(const memory::MemoryAccessTarget& target,
                                      uint64_t requestId) {
-  uint64_t addrStart = target.address;
+  dbgReads_++;
   uint64_t size = unsigned(target.size);
-  uint64_t addrEnd = addrStart + size - 1;
-  /*
-      Check if address is greater than max memory address or overflows.
-      This often happens on wrongly speculated branches leading to
-      large values. In this case we queue an empty register value
-      which signals an exception. However, wrongly speculated branches
-      lead to a pipeline flush after which execution continues.
-  */
-  if (addrEnd > maxAddrMemory_ || unsignedOverflow_(addrStart, size)) {
+
+  // Service the read functionally and synchronously through the MMU
+  // (virtual->physical translation + lazy page-fault handling + SimpleMem).
+  // This yields both the correct bytes and the translated physical address.
+  simeng::memory::DataPacket resp;
+  bool gotResponse = false;
+  mmu_->bufferRequest(
+      simeng::memory::DataPacket(target.address, size,
+                                 simeng::memory::READ_REQUEST, requestId),
+      [&](simeng::memory::DataPacket pkt) {
+        resp = pkt;
+        gotResponse = true;
+      });
+
+  // A fault (e.g. wrongly speculated branch producing a wild address) is
+  // signalled to the core with an empty RegisterValue, matching the
+  // behaviour of FixedLatencyMemoryInterface. No SST request is issued.
+  if (!gotResponse || resp.inFault_) {
+    dbgFaults_++;
     completedReadRequests_.push_back({target, RegisterValue(), requestId});
     return;
   }
 
+  // resp.address_ holds the physical address; index the SST cache hierarchy
+  // by it so cache set/line behaviour is meaningful.
+  uint64_t addrStart = resp.address_;
+  uint64_t addrEnd = addrStart + size - 1;
+
   AggregateReadRequest* aggrReq = new AggregateReadRequest(target, requestId);
+  // Stash the functionally-correct bytes; SST responses are timing-only.
+  aggrReq->funcData_.assign(resp.data_.begin(), resp.data_.end());
   std::vector<StandardMem::Request*> requests =
       makeSSTRequests<AggregateReadRequest>(aggrReq, addrStart, addrEnd, size);
   // SST output data parsed by the testing framework.
@@ -179,27 +172,58 @@ void SimEngMemInterface::requestRead(const memory::MemoryAccessTarget& target,
               << "-split-" << requests.size() << std::endl;
   }
   for (StandardMem::Request* req : requests) {
+    dbgSstSends_++;
     sstMem_->send(req);
   }
 }
 
 void SimEngMemInterface::requestWrite(const memory::MemoryAccessTarget& target,
                                       const RegisterValue& data) {
-  uint64_t addrStart = target.address;
+  dbgWrites_++;
   uint64_t size = unsigned(target.size);
-  uint64_t addrEnd = addrStart + size - 1;
 
+  // Apply the write functionally and synchronously through the MMU so the
+  // SimpleMem-backed process image stays the correct source of truth for
+  // instruction fetch and syscalls. Capture the translated physical address.
+  const char* wd = data.getAsVector<char>();
+  std::vector<char> wbytes(wd, wd + size);
+  simeng::memory::DataPacket resp;
+  bool gotResponse = false;
+  mmu_->bufferRequest(
+      simeng::memory::DataPacket(target.address, size,
+                                 simeng::memory::WRITE_REQUEST, 0, wbytes),
+      [&](simeng::memory::DataPacket pkt) {
+        resp = pkt;
+        gotResponse = true;
+      });
+
+  // Faulting writes (bad speculative address) carry no architectural effect
+  // and need no cache traffic.
+  if (!gotResponse || resp.inFault_) return;
+
+  // Issue the store into the SST cache hierarchy at the physical address for
+  // timing/coherence-state modelling only; the response is discarded.
+  uint64_t addrStart = resp.address_;
+  uint64_t addrEnd = addrStart + size - 1;
   AggregateWriteRequest* aggrReq = new AggregateWriteRequest(target, data);
   std::vector<StandardMem::Request*> requests =
       makeSSTRequests<AggregateWriteRequest>(aggrReq, addrStart, addrEnd, size);
 
   for (StandardMem::Request* req : requests) {
+    dbgSstSends_++;
     sstMem_->send(req);
   }
   delete aggrReq;
 }
 
-void SimEngMemInterface::tick() { tickCounter_++; }
+void SimEngMemInterface::tick() {
+  tickCounter_++;
+  if (debug_ && (tickCounter_ % 5000000) == 0) {
+    std::cerr << "[SSTSimEng] memstats: reads=" << dbgReads_
+              << " writes=" << dbgWrites_ << " faults=" << dbgFaults_
+              << " sstSends=" << dbgSstSends_ << std::endl;
+  }
+}
 
 void SimEngMemInterface::clearCompletedReads() {
   completedReadRequests_.clear();
@@ -218,36 +242,26 @@ const span<memory::MemoryReadResult> SimEngMemInterface::getCompletedReads()
 void SimEngMemInterface::aggregatedReadResponses(
     AggregateReadRequest* aggrReq) {
   if (aggrReq->aggregateCount_ != 0) return;
-  std::vector<uint8_t> mergedData;
-  // Loop through the ordered map and merge the data in order inside the
-  // mergedData vector. Also remove entries from the aggregation_map as we loop
-  // through each SST Request id.
+  // All SST timing responses for this read have now returned, so the core
+  // has paid the modelled L1/L2/DRAM latency. Drop the SST request-id ->
+  // aggregate bookkeeping; the SST-returned bytes are ignored — the value
+  // delivered to the core is the functionally-correct data captured from the
+  // MMU/SimpleMem path at request time.
   for (auto itr = aggrReq->responseMap_.begin();
        itr != aggrReq->responseMap_.end(); itr++) {
-    mergedData.insert(mergedData.end(), itr->second.begin(), itr->second.end());
     aggregationMap_.erase(itr->first);
   }
-  // Send the completed read request back to SimEng via the
-  // completed_read_requests queue.
-  uint64_t resp = 0;
-  for (int x = mergedData.size() - 1; x >= 0; x--) {
-    resp = (resp << 8) | mergedData[x];
-  }
-  // SST output data parsed by the testing framework.
-  // Format:
-  // [SSTSimEng:SSTDebug] MemRead-read-<type=request|response>-<request ID>
-  // -cycle-<cycle count>-data-<value>
   uint64_t id = aggrReq->id_;
   if (debug_) {
     std::cout << "[SSTSimEng:SSTDebug] MemRead"
               << "-read-response-" << id << "-cycle-" << tickCounter_
-              << "-data-" << resp << std::endl;
+              << "-split-done" << std::endl;
   }
 
-  const char* char_data = reinterpret_cast<const char*>(&mergedData[0]);
   completedReadRequests_.push_back(
       {aggrReq->target,
-       RegisterValue(char_data, uint16_t(unsigned(aggrReq->target.size))),
+       RegisterValue(aggrReq->funcData_.data(),
+                     uint16_t(unsigned(aggrReq->target.size))),
        aggrReq->id_});
 
   // Cleanup
