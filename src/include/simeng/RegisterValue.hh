@@ -58,6 +58,12 @@ class RegisterValue {
     char* dest;
     if (isLocal()) {
       dest = this->value;
+      // Zero the local buffer so that the [bytes, capacity) tail is
+      // deterministic (matches the heap path and the value ctor). Without
+      // this, a RegisterValue whose copied data is shorter than its
+      // capacity exposes uninitialised host memory, making simulation
+      // results depend on host allocation layout.
+      std::memset(dest, 0, MAX_LOCAL_BYTES);
     } else {
       dest = static_cast<char*>(pool.allocate(capacity));
       std::memset(dest, 0, capacity);
@@ -127,8 +133,12 @@ class RegisterValue {
   std::shared_ptr<char> ptr;
 
   /** The underlying local member value. Aligned to 8 bytes to prevent
-   * potential alignment issue when casting. */
-  alignas(8) char value[MAX_LOCAL_BYTES];
+   * potential alignment issue when casting. Default-initialised to zero so
+   * that an unwritten or partially-written local buffer (e.g. a
+   * default-constructed RegisterValue read via getAsVector(), which can
+   * happen when an instruction helper indexes a missing operand) yields
+   * deterministic zeros instead of host-layout-dependent garbage. */
+  alignas(8) char value[MAX_LOCAL_BYTES] = {};
 };
 
 inline bool operator==(const RegisterValue& lhs, const RegisterValue& rhs) {

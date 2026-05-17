@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <ctime>
+#include <random>
 
 #include "simeng/OS/Constants.hh"
 #include "simeng/OS/SimOS.hh"
@@ -803,8 +804,15 @@ void SyscallHandler::handleSyscall() {
     case 278: {  // getrandom
       // TODO: support flags argument
 
-      // seed random numbers
-      srand(clock());
+      // The simulation must be deterministic and independent of host state.
+      // The previous implementation seeded with srand(clock()), making the
+      // bytes (and therefore glibc's stack/pointer guard, malloc arena
+      // randomisation, etc.) depend on host CPU time — any change to host
+      // workload (e.g. added instrumentation) silently diverged the
+      // simulated execution. Use a fixed-seed deterministic engine that
+      // advances across calls so repeated getrandom calls still differ but
+      // the whole run is reproducible.
+      static std::mt19937_64 randEng(0x5126E9C0DE5EE7ULL);
 
       // Write <buflen> random bytes to buf
       uint64_t bufPtr = currentInfo_.registerArguments[0].get<uint64_t>();
@@ -812,7 +820,7 @@ void SyscallHandler::handleSyscall() {
 
       std::vector<char> bufvec(buflen);
       for (size_t i = 0; i < buflen; i++) {
-        bufvec[i] = (uint8_t)rand();
+        bufvec[i] = (uint8_t)(randEng() & 0xFF);
       }
 
       stateChange = {

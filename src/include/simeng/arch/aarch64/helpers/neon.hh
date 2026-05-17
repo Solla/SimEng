@@ -539,9 +539,20 @@ class neonHelp {
     const T* n = operands[0].getAsVector<T>();
     const T* m = operands[1].getAsVector<T>();
 
-    T out[I];
+    // UMAXP is a *pairwise* reduction over the concatenation of vn:vm, not an
+    // element-wise max. out[0..I/2) = max of adjacent pairs of vn;
+    // out[I/2..I) = max of adjacent pairs of vm. (The previous element-wise
+    // `max(n[i], m[i])` only folded the low half, so e.g. glibc's strrchr
+    // NUL-detect (`umaxp v5.16b, v2.16b, v2.16b`) never saw a NUL byte in the
+    // upper 8 bytes of a 16-byte chunk and looped forever.)
+    T out[16 / sizeof(T)] = {0};
+    uint8_t offset = I / 2;
     for (int i = 0; i < I; i++) {
-      out[i] = std::max(n[i], m[i]);
+      if (i < offset) {
+        out[i] = std::max(n[i * 2], n[(i * 2) + 1]);
+      } else {
+        out[i] = std::max(m[(i - offset) * 2], m[((i - offset) * 2) + 1]);
+      }
     }
     return {out, 256};
   }
@@ -556,9 +567,16 @@ class neonHelp {
     const T* n = operands[0].getAsVector<T>();
     const T* m = operands[1].getAsVector<T>();
 
-    T out[I];
+    // UMINP is a *pairwise* reduction over vn:vm (see vecUMaxP), not an
+    // element-wise min.
+    T out[16 / sizeof(T)] = {0};
+    uint8_t offset = I / 2;
     for (int i = 0; i < I; i++) {
-      out[i] = std::min(n[i], m[i]);
+      if (i < offset) {
+        out[i] = std::min(n[i * 2], n[(i * 2) + 1]);
+      } else {
+        out[i] = std::min(m[(i - offset) * 2], m[((i - offset) * 2) + 1]);
+      }
     }
     return {out, 256};
   }

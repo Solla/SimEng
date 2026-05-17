@@ -66,6 +66,11 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
   mnemonic = insn.mnemonic;
   operandStr = std::string(insn.op_str);
 
+  // Zero the implicit src/dest arrays so any slot past the populated count is
+  // deterministic (these are members of a non-zeroed heap allocation).
+  std::memset(implicitSources, 0, sizeof(implicitSources));
+  std::memset(implicitDestinations, 0, sizeof(implicitDestinations));
+
   // Copy register/group/operand information
   uint8_t srcCount = 0;
   for (uint8_t i = 0; i < insn.detail->regs_read_count; i++) {
@@ -86,6 +91,15 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
   implicitDestinationCount = destCount;
 
   groupCount = insn.detail->groups_count;
+  // The fixed-size groups/operands arrays are members of a heap-allocated
+  // (make_shared) InstructionMetadata that is NOT zero-initialised. Only the
+  // first groupCount/operandCount entries are populated by the memcpy below;
+  // any later access to a higher index (e.g. an out-of-range operand index in
+  // a decode/execute helper) would otherwise read host-layout-dependent heap
+  // garbage, making simulation non-deterministic w.r.t. host state. Zero the
+  // full arrays first so unused slots are deterministic.
+  std::memset(groups, 0, sizeof(groups));
+  std::memset(operands, 0, sizeof(operands));
   std::memcpy(groups, insn.detail->groups, sizeof(uint8_t) * groupCount);
   std::memcpy(operands, insn.detail->arm64.operands,
               sizeof(cs_arm64_op) * operandCount);
@@ -1724,7 +1738,12 @@ InstructionMetadata::InstructionMetadata(const uint8_t* invalidEncoding,
       writeback(false),
       operandCount(0) {
   assert(bytes <= sizeof(encoding));
+  std::memset(encoding, 0, sizeof(encoding));
   std::memcpy(encoding, invalidEncoding, bytes);
+  std::memset(groups, 0, sizeof(groups));
+  std::memset(operands, 0, sizeof(operands));
+  std::memset(implicitSources, 0, sizeof(implicitSources));
+  std::memset(implicitDestinations, 0, sizeof(implicitDestinations));
   mnemonic[0] = '\0';
   operandStr[0] = '\0';
 }
