@@ -104,10 +104,16 @@ uint64_t MemRegion::updateBrkRegion(uint64_t brk) {
     std::exit(1);
   }
 
+  // The newly-exposed heap pages are [oldBrk, newBrk); the MAP_FIXED
+  // mapping must therefore start at oldBrk. Passing newBrk mapped a
+  // correctly-sized region at the wrong (too-high) address, leaving
+  // [oldBrk, newBrk) unmapped — a brk-extended allocation straddling
+  // that gap (e.g. glibc's tcache_perthread_struct) then faulted on a
+  // wild load (data abort at __free 0x412bec).
   [[maybe_unused]] uint64_t retAddr =
-      mmapRegion(newBrk, newBrk - oldBrk, 0, SIMENG_MAP_FIXED, HostFileMMap());
+      mmapRegion(oldBrk, newBrk - oldBrk, 0, SIMENG_MAP_FIXED, HostFileMMap());
   assert(
-      retAddr == newBrk &&
+      retAddr == oldBrk &&
       "[SimEng:MemRegion] Address returned by mmapRegion with MAP_FIXED flag"
       "returned different address - updateBrk.");
   heapRegion_->brk = brk;
