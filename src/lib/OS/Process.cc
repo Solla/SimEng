@@ -138,6 +138,19 @@ Process::Process(
 
     taddr = pageTable_->translate(phdr.p_vaddr);
     sendToMem_(phdr.data, taddr, phdr.p_filesz);
+
+    // The Linux kernel's load_elf_binary zero-fills the portion of a
+    // loadable segment that has no backing file data (p_filesz < p_memsz),
+    // i.e. the .bss. SimEng's page frames are not guaranteed zeroed, so
+    // glibc's malloc/arena state in .bss would otherwise read host garbage
+    // (manifesting as a data abort on a wild pointer in __free). Explicitly
+    // zero [p_vaddr + p_filesz, endAddrMemSz) to match Linux semantics.
+    if (endAddrMemSz > phdr.p_vaddr + phdr.p_filesz) {
+      uint64_t bssVaddr = phdr.p_vaddr + phdr.p_filesz;
+      uint64_t bssSize = endAddrMemSz - bssVaddr;
+      uint64_t bssTaddr = pageTable_->translate(bssVaddr);
+      sendToMem_(std::vector<char>(bssSize, 0), bssTaddr, bssSize);
+    }
   }
 
   // Map the stack and populate the page table.

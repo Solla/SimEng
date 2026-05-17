@@ -703,9 +703,14 @@ class neonHelp {
       std::vector<RegisterValue>& operands,
       const simeng::arch::aarch64::InstructionMetadata& metadata,
       bool isShrn2) {
+    // For the plain `shrn` form the destination is write-only, so the only
+    // source operand is `vn` at operands[0]. For the `shrn2` form the
+    // destination is read (its low half is preserved), so operands[0] is the
+    // old destination value and `vn` is operands[1].
     const D* d;
     if (isShrn2) d = operands[0].getAsVector<D>();
-    const N* n = operands[1].getAsVector<N>();
+    const N* n =
+        isShrn2 ? operands[1].getAsVector<N>() : operands[0].getAsVector<N>();
     uint64_t shift = metadata.operands[2].imm;
     D out[16 / sizeof(D)] = {0};
     for (int i = 0; i < I; i++) {
