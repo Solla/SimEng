@@ -1141,6 +1141,26 @@ void Instruction::execute() {
             neonHelp::vecDup_gprOrIndex<uint16_t, 4>(operands, metadata, true);
         break;
       }
+      case Opcode::AArch64_DUPv4i16lane: {  // dup vd.4h, vn.h[index]
+        results[0] =
+            neonHelp::vecDup_gprOrIndex<uint16_t, 4>(operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_DUPv8i16lane: {  // dup vd.8h, vn.h[index]
+        results[0] =
+            neonHelp::vecDup_gprOrIndex<uint16_t, 8>(operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_DUPv8i8lane: {  // dup vd.8b, vn.b[index]
+        results[0] =
+            neonHelp::vecDup_gprOrIndex<uint8_t, 8>(operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_DUPv16i8lane: {  // dup vd.16b, vn.b[index]
+        results[0] =
+            neonHelp::vecDup_gprOrIndex<uint8_t, 16>(operands, metadata, false);
+        break;
+      }
       case Opcode::AArch64_DUPv4i32gpr: {  // dup vd.4s, wn
         results[0] =
             neonHelp::vecDup_gprOrIndex<uint32_t, 4>(operands, metadata, true);
@@ -2344,6 +2364,15 @@ void Instruction::execute() {
         results[0] = operands[0];
         break;
       }
+      case Opcode::AArch64_CHKFEAT: {  // chkfeat x16
+        // ARMv8.9 FEAT_CHK feature-check hint. It reads and writes X16: on
+        // output the bits for *supported* checked features are cleared. With
+        // FEAT_CHK / no checkable features modelled, X16 is architecturally
+        // unchanged, so pass the source through (same rationale as the PAC
+        // NOPs above — avoid forwarding an uninitialised destination).
+        results[0] = operands[0];
+        break;
+      }
       case Opcode::AArch64_INCB_XPiI: {  // incb xdn{, pattern{, #imm}}
         results[0] =
             sveHelp::sveInc_gprImm<int8_t>(operands, metadata, VL_bits);
@@ -3336,6 +3365,36 @@ void Instruction::execute() {
         results[0] = static_cast<int64_t>(memoryData[0].get<int8_t>());
         break;
       }
+      case Opcode::AArch64_LDRSBWpost: {  // ldrsb wt, [xn], #imm
+        // LOAD
+        results[0] =
+            RegisterValue(static_cast<int32_t>(memoryData[0].get<int8_t>()))
+                .zeroExtend(4, 8);
+        results[1] = operands[0].get<uint64_t>() + metadata.operands[2].imm;
+        break;
+      }
+      case Opcode::AArch64_LDRSBWpre: {  // ldrsb wt, [xn, #imm]!
+        // LOAD
+        results[0] =
+            RegisterValue(static_cast<int32_t>(memoryData[0].get<int8_t>()))
+                .zeroExtend(4, 8);
+        results[1] =
+            operands[0].get<uint64_t>() + metadata.operands[1].mem.disp;
+        break;
+      }
+      case Opcode::AArch64_LDRSBXpost: {  // ldrsb xt, [xn], #imm
+        // LOAD
+        results[0] = static_cast<int64_t>(memoryData[0].get<int8_t>());
+        results[1] = operands[0].get<uint64_t>() + metadata.operands[2].imm;
+        break;
+      }
+      case Opcode::AArch64_LDRSBXpre: {  // ldrsb xt, [xn, #imm]!
+        // LOAD
+        results[0] = static_cast<int64_t>(memoryData[0].get<int8_t>());
+        results[1] =
+            operands[0].get<uint64_t>() + metadata.operands[1].mem.disp;
+        break;
+      }
       case Opcode::AArch64_LDRSHWroW: {  // ldrsh wt, [xn, wm{, extend
                                          // {#amount}}]
         // LOAD
@@ -4208,6 +4267,36 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_SSHLLv4i32_shift: {  // sshll2 vd.2d, vn.4s, #imm
         results[0] = neonHelp::vecShllShift_vecImm<int64_t, int32_t, 2>(
+            operands, metadata, true);
+        break;
+      }
+      case Opcode::AArch64_SHRNv8i8_shift: {  // shrn vd.8b, vn.8h, #imm
+        results[0] = neonHelp::vecShrnShift_imm<uint8_t, uint16_t, 8>(
+            operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_SHRNv16i8_shift: {  // shrn2 vd.16b, vn.8h, #imm
+        results[0] = neonHelp::vecShrnShift_imm<uint8_t, uint16_t, 16>(
+            operands, metadata, true);
+        break;
+      }
+      case Opcode::AArch64_SHRNv4i16_shift: {  // shrn vd.4h, vn.4s, #imm
+        results[0] = neonHelp::vecShrnShift_imm<uint16_t, uint32_t, 4>(
+            operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_SHRNv8i16_shift: {  // shrn2 vd.8h, vn.4s, #imm
+        results[0] = neonHelp::vecShrnShift_imm<uint16_t, uint32_t, 8>(
+            operands, metadata, true);
+        break;
+      }
+      case Opcode::AArch64_SHRNv2i32_shift: {  // shrn vd.2s, vn.2d, #imm
+        results[0] = neonHelp::vecShrnShift_imm<uint32_t, uint64_t, 2>(
+            operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_SHRNv4i32_shift: {  // shrn2 vd.4s, vn.2d, #imm
+        results[0] = neonHelp::vecShrnShift_imm<uint32_t, uint64_t, 4>(
             operands, metadata, true);
         break;
       }

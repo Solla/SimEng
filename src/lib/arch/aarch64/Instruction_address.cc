@@ -526,11 +526,15 @@ span<const MemoryAccessTarget> Instruction::generateAddresses() {
         setMemoryAddresses({{operands[1].get<uint64_t>(), 8}});
         break;
       }
-      case Opcode::AArch64_LDRBBpost: {  // ldrb wt, [xn], #imm
+      case Opcode::AArch64_LDRBBpost:      // ldrb wt, [xn], #imm
+      case Opcode::AArch64_LDRSBWpost:     // ldrsb wt, [xn], #imm
+      case Opcode::AArch64_LDRSBXpost: {   // ldrsb xt, [xn], #imm
         setMemoryAddresses({{operands[0].get<uint64_t>(), 1}});
         break;
       }
-      case Opcode::AArch64_LDRBBpre: {  // ldrb wt, [xn, #imm]!
+      case Opcode::AArch64_LDRBBpre:       // ldrb wt, [xn, #imm]!
+      case Opcode::AArch64_LDRSBWpre:      // ldrsb wt, [xn, #imm]!
+      case Opcode::AArch64_LDRSBXpre: {    // ldrsb xt, [xn, #imm]!
         setMemoryAddresses(
             {{operands[0].get<uint64_t>() + metadata.operands[1].mem.disp, 1}});
         break;

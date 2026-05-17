@@ -690,6 +690,35 @@ class neonHelp {
     return {out, 256};
   }
 
+  /** Helper function for NEON instructions with the format
+   * `shrn{2} vd, vn, #imm` (shift right by an immediate and narrow).
+   * D represents the type of the dest. element (e.g. for vd.8b, D =
+   * uint8_t). N represents the type of the source element (e.g. for vn.8h,
+   * N = uint16_t). I represents the number of elements in the output vector
+   * to be updated (i.e. for vd.8b I = 8, for shrn2 vd.16b I = 16). For the
+   * `shrn2` form the low half of the destination is preserved.
+   * Returns correctly formatted RegisterValue. */
+  template <typename D, typename N, int I>
+  static RegisterValue vecShrnShift_imm(
+      std::vector<RegisterValue>& operands,
+      const simeng::arch::aarch64::InstructionMetadata& metadata,
+      bool isShrn2) {
+    const D* d;
+    if (isShrn2) d = operands[0].getAsVector<D>();
+    const N* n = operands[1].getAsVector<N>();
+    uint64_t shift = metadata.operands[2].imm;
+    D out[16 / sizeof(D)] = {0};
+    for (int i = 0; i < I; i++) {
+      if (isShrn2 && (i < (I / 2))) {
+        out[i] = d[i];
+      } else {
+        int srcIdx = isShrn2 ? (i - (I / 2)) : i;
+        out[i] = static_cast<D>(n[srcIdx] >> shift);
+      }
+    }
+    return {out, 256};
+  }
+
   /** Helper function for NEON instructions with the format `sshr vd, vn, #imm`.
    * T represents the type of operands (e.g. for vn.2d, T = uint64_t).
    * I represents the number of elements in the output array to be updated (e.g.
