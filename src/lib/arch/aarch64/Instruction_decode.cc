@@ -182,8 +182,28 @@ void Instruction::decode() {
     return;
   }
 
-  // Extract implicit writes
+  // Extract implicit writes.
+  // Newer Capstone reports the write-back base register of pre/post-index
+  // memory accesses in regs_write (implicit destinations). It is added here
+  // *before* the explicit data register, which would put the loaded value in
+  // the base register and the address update in the data register (execute()
+  // assigns results[0]=data, results[last]=write-back). Skip the implicit
+  // base for write-back memory ops; the explicit metadata.writeback path
+  // below appends it in the correct position (after the data register(s)).
   for (size_t i = 0; i < metadata.implicitDestinationCount; i++) {
+    if (metadata.writeback) {
+      const auto implReg =
+          static_cast<aarch64_reg>(metadata.implicitDestinations[i]);
+      bool isMemBase = false;
+      for (size_t j = 0; j < metadata.operandCount; j++) {
+        if (metadata.operands[j].type == AARCH64_OP_MEM &&
+            metadata.operands[j].mem.base == implReg) {
+          isMemBase = true;
+          break;
+        }
+      }
+      if (isMemBase) continue;
+    }
     destinationRegisters.push_back(csRegToRegister(
         static_cast<aarch64_reg>(metadata.implicitDestinations[i])));
     destinationRegisterCount++;
@@ -317,7 +337,13 @@ void Instruction::decode() {
       operandsPending++;
       sourceRegisterCount++;
     } else if (op.type == AARCH64_OP_REG_MRS) {
-      int32_t sysRegTag = architecture_.getSystemRegisterTag(op.imm);
+      // Newer Capstone carries the system-register encoding in
+      // sysop.reg.raw_val, not in op.imm (which is now 0/unused for MRS/MSR).
+      // Using op.imm makes getSystemRegisterTag() miss every system register
+      // (e.g. glibc's `mrs xN, DCZID_EL0` during static-init) and raise a
+      // spurious UnmappedSysReg fault.
+      int32_t sysRegTag = architecture_.getSystemRegisterTag(
+          static_cast<uint16_t>(op.sysop.reg.raw_val));
       if (sysRegTag == -1) {
         exceptionEncountered_ = true;
         exception_ = InstructionException::UnmappedSysReg;
@@ -331,7 +357,9 @@ void Instruction::decode() {
         operandsPending++;
       }
     } else if (op.type == AARCH64_OP_REG_MSR) {
-      int32_t sysRegTag = architecture_.getSystemRegisterTag(op.imm);
+      // See the MRS note above: the encoding is in sysop.reg.raw_val.
+      int32_t sysRegTag = architecture_.getSystemRegisterTag(
+          static_cast<uint16_t>(op.sysop.reg.raw_val));
       if (sysRegTag == -1) {
         exceptionEncountered_ = true;
         exception_ = InstructionException::UnmappedSysReg;

@@ -52,10 +52,36 @@ void FetchUnit::tick() {
       // desyncing the FTQ and global history (catastrophic for loop-heavy
       // code such as Dhrystone). The loop buffer remains a fetch-bandwidth
       // optimisation only; control flow is still driven by loopBuffer_.
+      bool loopExitPredicted = false;
       if (macroOp[0]->isBranch()) {
-        macroOp[0]->setBranchPrediction(branchPredictor_.predict(
+        BranchPrediction prediction = branchPredictor_.predict(
             loopBuffer_.front().address, macroOp[0]->getBranchType(),
-            macroOp[0]->getKnownOffset()));
+            macroOp[0]->getKnownOffset());
+        macroOp[0]->setBranchPrediction(prediction);
+        // Symmetric to the FILLING state (see the loopBoundaryAddress_ check
+        // there): if the loop-closing branch is predicted to leave the loop,
+        // stop supplying from the buffer and resume normal fetch at the
+        // fall-through. Without this, SUPPLYING cycles the buffer
+        // indefinitely and is only ever broken by a downstream misprediction
+        // flush; the unbounded speculative predict() calls then accumulate
+        // FTQ/global-history desync that eventually wedges a later loop
+        // (observed: nolibc Dhrystone Proc0 strcpy loop running away after
+        // ~10 invocations under the default loop-buffer config).
+        if (loopBuffer_.front().address == loopBoundaryAddress_ &&
+            !prediction.isTaken) {
+          loopExitPredicted = true;
+        }
+      }
+
+      if (loopExitPredicted) {
+        // Fall through past the loop-closing branch; the branch macro-op for
+        // this slot has been emitted and will resolve in the ROB as usual.
+        pc_ = loopBuffer_.front().address +
+              loopBuffer_.front().instructionSize;
+        loopBuffer_.clear();
+        loopBufferState_ = LoopBufferState::IDLE;
+        loopBoundaryAddress_ = 0;
+        return;
       }
 
       // Cycle queue by moving front entry to back

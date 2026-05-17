@@ -1,6 +1,7 @@
 #include "InstructionMetadata.hh"
 
 #include <cassert>
+#include <cctype>
 #include <cstring>
 #include <unordered_map>
 
@@ -1160,6 +1161,16 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       // PTRUE doesn't label access
       operands[0].access = CS_AC_WRITE;
       break;
+    case Opcode::AArch64_BL:
+      [[fallthrough]];
+    case Opcode::AArch64_BLR:
+      // Newer Capstone classifies calls under ARM64_GRP_CALL rather than
+      // ARM64_GRP_JUMP, so the branch-identification scan (which only checks
+      // for ARM64_GRP_JUMP) misses bl/blr and the PC is never redirected.
+      // Force the JUMP group to keep these recognised as branches.
+      groupCount = 1;
+      groups[0] = CS_GRP_JUMP;
+      break;
     case Opcode::AArch64_RET:
       // If no register supplied to RET, default to x30 (LR)
       if (operandCount == 0) {
@@ -1659,6 +1670,43 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
         pos = operandStr.find("za", pos + 1);
       }
       break;
+    }
+  }
+
+  // Newer Capstone no longer sets arm64.post_index for write-back addressing
+  // modes (it represents the post-index amount as a trailing operand and the
+  // pre-index "!" only in the printed form). decode() and execute() rely on
+  // metadata.writeback to add the base register as a destination and to apply
+  // the address update; without this recovery, post/pre-index loads/stores
+  // never advance their base register (e.g. inlined strcpy byte loops spin
+  // forever). Recover the flag from the printed operand form, which is the
+  // only reliable signal across Capstone versions.
+  if (!writeback) {
+    const std::string& ops = operandStr;
+    // Find the memory-addressing bracket: a '[' followed by a register name
+    // (alphabetic). Vector lane indices print as '[<digit>]' and must not be
+    // mistaken for a memory operand.
+    size_t lb = std::string::npos;
+    for (size_t i = 0; i < ops.size(); ++i) {
+      if (ops[i] == '[' && i + 1 < ops.size() &&
+          std::isalpha(static_cast<unsigned char>(ops[i + 1]))) {
+        lb = i;
+      }
+    }
+    if (lb != std::string::npos) {
+      size_t rb = ops.find(']', lb);
+      if (rb != std::string::npos) {
+        if (rb + 1 < ops.size() && ops[rb + 1] == '!') {
+          // Pre-index: "[xn, #imm]!"
+          writeback = true;
+        } else {
+          // Post-index: a further operand printed after the ']'
+          // ("[xn], #imm" or "[xn], xm").
+          size_t k = rb + 1;
+          while (k < ops.size() && (ops[k] == ' ' || ops[k] == ',')) k++;
+          if (k < ops.size()) writeback = true;
+        }
+      }
     }
   }
 
