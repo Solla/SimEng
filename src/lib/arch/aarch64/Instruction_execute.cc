@@ -3359,6 +3359,36 @@ void Instruction::execute() {
                 .zeroExtend(4, 8);
         break;
       }
+      case Opcode::AArch64_LDRSHWpost: {  // ldrsh wt, [xn], #imm
+        // LOAD
+        results[0] =
+            RegisterValue(static_cast<int32_t>(memoryData[0].get<int16_t>()), 4)
+                .zeroExtend(4, 8);
+        results[1] = operands[0].get<uint64_t>() + metadata.operands[2].imm;
+        break;
+      }
+      case Opcode::AArch64_LDRSHWpre: {  // ldrsh wt, [xn, #imm]!
+        // LOAD
+        results[0] =
+            RegisterValue(static_cast<int32_t>(memoryData[0].get<int16_t>()), 4)
+                .zeroExtend(4, 8);
+        results[1] =
+            operands[0].get<uint64_t>() + metadata.operands[1].mem.disp;
+        break;
+      }
+      case Opcode::AArch64_LDRSHXpost: {  // ldrsh xt, [xn], #imm
+        // LOAD
+        results[0] = static_cast<int64_t>(memoryData[0].get<int16_t>());
+        results[1] = operands[0].get<uint64_t>() + metadata.operands[2].imm;
+        break;
+      }
+      case Opcode::AArch64_LDRSHXpre: {  // ldrsh xt, [xn, #imm]!
+        // LOAD
+        results[0] = static_cast<int64_t>(memoryData[0].get<int16_t>());
+        results[1] =
+            operands[0].get<uint64_t>() + metadata.operands[1].mem.disp;
+        break;
+      }
       case Opcode::AArch64_LDRSHXroW: {  // ldrsh xt, [xn, wm{, extend
                                          // {#amount}}]
         // LOAD
@@ -4876,6 +4906,12 @@ void Instruction::execute() {
             arithmeticHelp::subExtend_3ops<uint64_t>(operands, metadata, true);
         results[0] = nzcv;
         results[1] = result;
+        break;
+      }
+      case Opcode::AArch64_SUBWrx: {  // sub wd, wn, wm{, extend #amount}
+        auto [result, nzcv] =
+            arithmeticHelp::subExtend_3ops<uint32_t>(operands, metadata, false);
+        results[0] = {result, 8};
         break;
       }
       case Opcode::AArch64_SUBWri: {  // sub wd, wn, #imm{, <shift>}
