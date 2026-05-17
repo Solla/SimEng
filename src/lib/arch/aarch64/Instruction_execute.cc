@@ -709,9 +709,14 @@ void Instruction::execute() {
         break;
       }
       case Opcode::AArch64_CMHSv16i8: {  // cmhs vd.16b, vn.16b, vm.16b
-        results[0] = neonHelp::vecCompare<int8_t, 16>(
+        // CMHS is unsigned "compare higher or same" — must compare the
+        // bytes as unsigned. With a signed int8_t compare, the cmeq-match
+        // lane 0xff (= -1) never satisfied >= data, so glibc's strchrnul /
+        // strchr NUL+char fold never detected the search char (printf
+        // format scan returned the literal format string).
+        results[0] = neonHelp::vecCompare<uint8_t, 16>(
             operands, false,
-            [](int8_t x, int8_t y) -> bool { return (x >= y); });
+            [](uint8_t x, uint8_t y) -> bool { return (x >= y); });
         break;
       }
       case Opcode::AArch64_CMPEQ_PPzZI_B: {  // cmpeq pd.b, pg/z, zn.b, #imm
