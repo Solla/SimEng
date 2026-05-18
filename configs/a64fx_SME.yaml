@@ -12,6 +12,8 @@ Core:
   Streaming-Vector-Length: 512
 Fetch:
   Fetch-Block-Size: 32
+  MOP-Queue-Size: 2
+  MOP-Cache-Tag-Bits: 8
   Loop-Buffer-Size: 48
   Loop-Detection-Threshold: 4
 Process-Image:
@@ -39,6 +41,7 @@ Queue-Sizes:
 Port-Allocator:
   Type: A64FX
 Branch-Predictor:
+  Type: "Generic"
   BTB-Tag-Bits: 11
   Saturating-Count-Bits: 2
   Global-History-Length: 11
