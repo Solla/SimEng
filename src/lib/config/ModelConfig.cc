@@ -1,7 +1,9 @@
 #define RYML_SINGLE_HDR_DEFINE_NOW
 #include "simeng/config/ModelConfig.hh"
 
+#include <algorithm>
 #include <cmath>
+#include <string_view>
 
 #include "arch/aarch64/InstructionMetadata.hh"
 #include "arch/riscv/InstructionMetadata.hh"
@@ -33,11 +35,46 @@ ModelConfig::ModelConfig(std::string path) {
     std::cerr << "[SimEng:ModelConfig] Could not read " << path << std::endl;
     exit(1);
   }
-  // Read in the contents of the file and create a ryml:Tree from it
+  // Read in the contents of the file, normalise it, and create a ryml::Tree.
+  //
+  // Two normalisations are required because the rest of ModelConfig (and
+  // ArchInfo) assume the parsed tree root is a MAP and index into it with
+  // node["Key"], which ryml asserts (is_map) — a failed assert aborts the
+  // process:
+  //
+  //  1. Strip carriage returns. This project is built/checked-out on Windows
+  //     hosts where git core.autocrlf rewrites the committed-LF YAML with
+  //     CRLF endings, leaving a trailing '\r' on every scalar value
+  //     (e.g. ISA would parse as "AArch64\r").
+  //  2. Drop any leading "---" YAML document-start marker line. ryml parses a
+  //     document-prefixed file as a STREAM node containing a DOC child, so
+  //     the tree root is a STREAM (is_map == false) and the first node["Key"]
+  //     access aborts. The shipped a64fx*.yaml configs start with "---";
+  //     SimEng configs are always single-document, so removing the marker
+  //     yields the expected MAP root with no semantic change.
   std::stringstream buffer;
   buffer << file.rdbuf();
-  configTree_ = ryml::parse_in_arena(ryml::to_csubstr(buffer.str()));
   file.close();
+  std::string contents = buffer.str();
+  contents.erase(std::remove(contents.begin(), contents.end(), '\r'),
+                 contents.end());
+  // Remove standalone YAML document-start marker lines ("---").
+  for (size_t pos = 0; pos < contents.size();) {
+    size_t eol = contents.find('\n', pos);
+    size_t lineEnd = (eol == std::string::npos) ? contents.size() : eol;
+    std::string_view line(contents.data() + pos, lineEnd - pos);
+    // Trim trailing whitespace for the comparison.
+    size_t last = line.find_last_not_of(" \t");
+    bool isDocMarker =
+        (last != std::string_view::npos && line.substr(0, last + 1) == "---");
+    if (isDocMarker) {
+      contents.erase(pos, (eol == std::string::npos ? lineEnd : eol + 1) - pos);
+      // Do not advance pos; re-evaluate from the same offset.
+    } else {
+      pos = (eol == std::string::npos) ? contents.size() : eol + 1;
+    }
+  }
+  configTree_ = ryml::parse_in_arena(ryml::to_csubstr(contents));
 
   // Set the expectations of the config file and validate the config values
   // within the passed config file
