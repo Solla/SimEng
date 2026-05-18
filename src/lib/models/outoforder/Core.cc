@@ -1,6 +1,7 @@
 #include "simeng/models/outoforder/Core.hh"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iomanip>
 #include <ios>
 #include <sstream>
@@ -103,6 +104,13 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
   portAllocator.setRSSizeGetter([this](std::vector<uint32_t>& sizeVec) {
     dispatchIssueUnit_.getRSSizes(sizeVec);
   });
+  // Re-arm ROB loop detection whenever the loop buffer disengages, so the
+  // next loop can be detected. Without this, ReorderBuffer::loopDetected_
+  // latches on the first detected loop and only clears on a pipeline flush
+  // — near-absent in low-mispredict loop-heavy code (e.g. Dhrystone),
+  // leaving the loop buffer dormant for the rest of the run.
+  fetchUnit_.setOnLoopBufferIdle(
+      [this]() { reorderBuffer_.resetLoopDetection(); });
   // Create exception handler based on chosen architecture
   exceptionHandlerFactory(config["Core"]["ISA"].as<std::string>());
 }
@@ -472,7 +480,8 @@ std::map<std::string, std::string> Core::getStats() const {
   std::ostringstream branchMissRateStr;
   branchMissRateStr << std::setprecision(3) << branchMissRate << "%";
 
-  return {{"cycles", std::to_string(ticks_)},
+  std::map<std::string, std::string> stats =
+      {{"cycles", std::to_string(ticks_)},
           {"retired", std::to_string(retired)},
           {"ipc", ipcStr.str()},
           {"flushes", std::to_string(flushes_)},
@@ -493,6 +502,14 @@ std::map<std::string, std::string> Core::getStats() const {
            std::to_string(reorderBuffer_.getViolatingLoadsCount())},
           {"idle.ticks", std::to_string(idle_ticks_)},
           {"context.switches", std::to_string(contextSwitches_)}};
+
+  // Optional fetch/branch-stall diagnostics (no behavioural effect).
+  if (std::getenv("SIMENG_FETCH_PROFILE") != nullptr) {
+    for (const auto& kv : fetchUnit_.getFetchProfile())
+      stats[kv.first] = kv.second;
+  }
+
+  return stats;
 }
 
 void Core::schedule(simeng::OS::cpuContext newContext) {

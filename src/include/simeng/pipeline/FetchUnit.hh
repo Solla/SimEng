@@ -1,6 +1,11 @@
 #pragma once
 
+#include <array>
+#include <functional>
 #include <queue>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "simeng/MemoryInterface.hh"
 #include "simeng/arch/Architecture.hh"
@@ -72,8 +77,22 @@ class FetchUnit {
    * branch. */
   uint64_t getBranchStalls() const;
 
+  /** Diagnostic: characterise WHERE taken-branch fetch bubbles and
+   * loop-buffer (non-)engagement originate. Returned as ordered
+   * {key,value} pairs; emitted into Core stats only when the
+   * SIMENG_FETCH_PROFILE env var is set. Pure observation — no effect
+   * on simulated behaviour. */
+  std::vector<std::pair<std::string, std::string>> getFetchProfile() const;
+
   /** Clear the loop buffer. */
   void flushLoopBuffer();
+
+  /** Install a callback invoked whenever the loop buffer disengages
+   * (loop exit or #4c abort), used to re-arm ROB loop detection so the
+   * next loop can be detected. */
+  void setOnLoopBufferIdle(std::function<void()> fn) {
+    onLoopBufferIdle_ = std::move(fn);
+  }
 
   /** Temporarily pause the FetchUnit. */
   void pause() {
@@ -124,8 +143,33 @@ class FetchUnit {
    * the instruction region. */
   bool hasHalted_ = false;
 
+  /** Callback to re-arm ROB loop detection when the loop buffer
+   * disengages. Empty until wired by the Core. */
+  std::function<void()> onLoopBufferIdle_;
+
   /** The number of cycles fetch terminated early due to a predicted branch. */
   uint64_t branchStalls_ = 0;
+
+  /** --- Diagnostic counters (SIMENG_FETCH_PROFILE). Pure observation. ---
+   * BranchType has 6 enumerators (Conditional..Unknown). */
+  /** Predicted-taken branches that ended a fetch group, by branch type. */
+  std::array<uint64_t, 6> takenByType_ = {};
+  /** Subset of the above that also wasted >=1 fetch slot (a branchStall),
+   * by branch type. */
+  std::array<uint64_t, 6> stallByType_ = {};
+  /** Total fetch slots wasted by taken-branch truncation (sum of the
+   * empty trailing slots, not just the stall-cycle count). */
+  uint64_t branchStallSlots_ = 0;
+  /** Loop-buffer engagement: FILLING entered (WAITING->FILLING). */
+  uint64_t lbFillStarted_ = 0;
+  /** FILLING aborted because the body had a non-boundary branch (#4c). */
+  uint64_t lbFillAbortedBranch_ = 0;
+  /** FILLING aborted because the boundary branch was predicted to exit. */
+  uint64_t lbFillAbortedExit_ = 0;
+  /** SUPPLYING entered (a full single-BB loop body was captured). */
+  uint64_t lbSupplyEntered_ = 0;
+  /** Instructions actually supplied from the loop buffer (no re-fetch). */
+  uint64_t lbSupplyInstrs_ = 0;
 
   /** The size of a fetch block, in bytes. */
   uint8_t blockSize_;

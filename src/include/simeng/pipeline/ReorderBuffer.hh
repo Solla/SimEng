@@ -96,6 +96,14 @@ class ReorderBuffer {
   /** Retrieve the number of retired brancehs. */
   uint64_t getRetiredBranchesCount() const;
 
+  /** Re-arm loop detection: clear the loopDetected_ latch and reset the
+   * candidate branch counter. Called when the loop buffer disengages so
+   * that subsequent loops can be detected. Without this, loopDetected_
+   * only clears on a pipeline flush — near-absent in low-mispredict
+   * loop-heavy code, leaving the loop buffer dormant after the first
+   * detected loop. */
+  void resetLoopDetection();
+
  private:
   /** A reference to the register alias table. */
   RegisterAliasTable& rat_;

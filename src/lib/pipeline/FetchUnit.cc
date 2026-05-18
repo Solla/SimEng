@@ -43,6 +43,7 @@ void FetchUnit::tick() {
 
       assert(bytesRead != 0 && "predecode failure for loop buffer entry");
       (void)bytesRead;
+      lbSupplyInstrs_++;
 
       // Still consult the branch predictor for loop-buffered branches. The
       // predictor follows an FTQ protocol: every branch reaching the ROB is
@@ -81,6 +82,7 @@ void FetchUnit::tick() {
         loopBuffer_.clear();
         loopBufferState_ = LoopBufferState::IDLE;
         loopBoundaryAddress_ = 0;
+        if (onLoopBufferIdle_) onLoopBufferIdle_();
         return;
       }
 
@@ -202,22 +204,27 @@ void FetchUnit::tick() {
       // non-boundary branch appears in its body and fall back to normal
       // fetch.
       if (macroOp[0]->isBranch() && pc_ != loopBoundaryAddress_) {
+        lbFillAbortedBranch_++;
         loopBuffer_.clear();
         loopBufferState_ = LoopBufferState::IDLE;
         loopBoundaryAddress_ = 0;
+        if (onLoopBufferIdle_) onLoopBufferIdle_();
       } else if (pc_ == loopBoundaryAddress_) {
         if (macroOp[0]->isBranch() &&
             !macroOp[0]->getBranchPrediction().isTaken) {
+          lbFillAbortedExit_++;
           // loopBoundaryAddress_ has been fetched whilst filling the loop
           // buffer BUT this is a branch, predicted to branch out of the loop
           // being buffered. Stop filling the loop buffer and don't supply to
           // decode
           loopBufferState_ = LoopBufferState::IDLE;
+          if (onLoopBufferIdle_) onLoopBufferIdle_();
         } else {
           // loopBoundaryAddress_ has been fetched whilst filling the loop
           // buffer. Stop filling as loop body has been recorded and begin to
           // supply decode unit with instructions from the loop buffer
           loopBufferState_ = LoopBufferState::SUPPLYING;
+          lbSupplyEntered_++;
           bufferedBytes_ = 0;
           break;
         }
@@ -226,6 +233,7 @@ void FetchUnit::tick() {
                pc_ == loopBoundaryAddress_) {
       // Once set loopBoundaryAddress_ is fetched, start to fill loop buffer
       loopBufferState_ = LoopBufferState::FILLING;
+      lbFillStarted_++;
     }
 
     assert(bytesRead <= bufferedBytes_ &&
@@ -248,8 +256,16 @@ void FetchUnit::tick() {
     }
 
     if (prediction.isTaken) {
+      // Diagnostic: a predicted-taken branch always truncates the fetch
+      // group here. Attribute it to its branch type and tally the empty
+      // trailing slots it cost this cycle (pure observation).
+      size_t bt = static_cast<size_t>(macroOp[0]->getBranchType());
+      if (bt >= takenByType_.size()) bt = takenByType_.size() - 1;
+      takenByType_[bt]++;
       if (slot + 1 < output_.getWidth()) {
         branchStalls_++;
+        stallByType_[bt]++;
+        branchStallSlots_ += (output_.getWidth() - 1 - slot);
       }
       // Can't continue fetch immediately after a branch
       bufferedBytes_ = 0;
@@ -319,6 +335,32 @@ void FetchUnit::requestFromPC() {
 }
 
 uint64_t FetchUnit::getBranchStalls() const { return branchStalls_; }
+
+std::vector<std::pair<std::string, std::string>> FetchUnit::getFetchProfile()
+    const {
+  // BranchType order: Conditional, LoopClosing, Return, SubroutineCall,
+  // Unconditional, Unknown.
+  static const char* kTypeName[6] = {"cond", "loopClose", "ret",
+                                     "call", "uncond",    "unknown"};
+  std::vector<std::pair<std::string, std::string>> p;
+  for (size_t i = 0; i < 6; i++)
+    p.emplace_back(std::string("fetchprof.taken.") + kTypeName[i],
+                   std::to_string(takenByType_[i]));
+  for (size_t i = 0; i < 6; i++)
+    p.emplace_back(std::string("fetchprof.stall.") + kTypeName[i],
+                   std::to_string(stallByType_[i]));
+  p.emplace_back("fetchprof.stallSlots", std::to_string(branchStallSlots_));
+  p.emplace_back("fetchprof.lb.fillStarted", std::to_string(lbFillStarted_));
+  p.emplace_back("fetchprof.lb.fillAbortedBranch",
+                 std::to_string(lbFillAbortedBranch_));
+  p.emplace_back("fetchprof.lb.fillAbortedExit",
+                 std::to_string(lbFillAbortedExit_));
+  p.emplace_back("fetchprof.lb.supplyEntered",
+                 std::to_string(lbSupplyEntered_));
+  p.emplace_back("fetchprof.lb.supplyInstrs",
+                 std::to_string(lbSupplyInstrs_));
+  return p;
+}
 
 void FetchUnit::flushLoopBuffer() {
   loopBuffer_.clear();

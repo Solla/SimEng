@@ -207,6 +207,11 @@ void ReorderBuffer::flush() {
   loopDetected_ = false;
 }
 
+void ReorderBuffer::resetLoopDetection() {
+  branchCounter_ = {{0, {false, 0}, 0}, 0};
+  loopDetected_ = false;
+}
+
 unsigned int ReorderBuffer::size() const { return buffer_.size(); }
 
 unsigned int ReorderBuffer::getFreeSpace() const {
