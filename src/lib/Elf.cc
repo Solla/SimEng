@@ -151,21 +151,27 @@ std::vector<Elf64_Phdr> Elf::parseElfPhdrs(
 }
 
 std::shared_ptr<Elf_Binary> Elf::parseElfBinary(std::string fpath) {
+  // A parse failure here is recoverable: report it and return a null binary
+  // so the caller's Elf::isValid() returns false. Calling std::exit() instead
+  // would abort the whole process -- which both denies the caller (e.g.
+  // LinuxProcess, which already handles !isValid()) any chance to react and
+  // tears down the gtest process mid-suite (ElfTest.invalidElf / nonElf /
+  // format32Elf exercise exactly these paths and assert !isValid()).
   std::ifstream file(fpath, std::ios::binary);
   if (!file.is_open()) {
     std::cerr << "[SimEng:Elf] Could not open " << fpath << std::endl;
-    std::exit(1);
+    return nullptr;
   }
   char elfMagic[4] = {0x7f, 'E', 'L', 'F'};
   auto ehdr = parseElfEhdr(file);
   if (std::memcmp(elfMagic, ehdr.e_ident.data(), sizeof(elfMagic))) {
     std::cerr << "[SimEng:Elf] Elf magic does not match" << std::endl;
-    std::exit(1);
+    return nullptr;
   }
   if (ehdr.e_ident[EI_CLASS] != ElfBitFormat::Format64) {
     std::cerr << "[SimEng:Elf] Unsupported architecture detected in Elf"
               << std::endl;
-    std::exit(1);
+    return nullptr;
   }
 
   auto phdrs = parseElfPhdrs(file, ehdr);
