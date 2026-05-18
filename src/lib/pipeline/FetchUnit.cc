@@ -187,7 +187,25 @@ void FetchUnit::tick() {
       loopBuffer_.push_back(
           {encoding, bytesRead, pc_, macroOp[0]->getBranchPrediction()});
 
-      if (pc_ == loopBoundaryAddress_) {
+      // The SUPPLYING state replays the captured body linearly and only
+      // honours control flow for the single loop-closing branch
+      // (loopBoundaryAddress_). If the body contains ANY other branch
+      // (an internal conditional branch, an unconditional branch, a
+      // call or a return), linear replay supplies the captured
+      // fall-through regardless of that branch's actual direction. When
+      // such a branch's prediction matches its real outcome there is no
+      // rescuing misprediction flush, so the wrong instructions retire
+      // and silently corrupt architectural state (observed: CoreMark
+      // matrix_sum / list / state CRCs wrong only with the loop buffer
+      // engaged; correct with it disabled). Only single-basic-block
+      // loops are safe to buffer, so abort buffering this loop if a
+      // non-boundary branch appears in its body and fall back to normal
+      // fetch.
+      if (macroOp[0]->isBranch() && pc_ != loopBoundaryAddress_) {
+        loopBuffer_.clear();
+        loopBufferState_ = LoopBufferState::IDLE;
+        loopBoundaryAddress_ = 0;
+      } else if (pc_ == loopBoundaryAddress_) {
         if (macroOp[0]->isBranch() &&
             !macroOp[0]->getBranchPrediction().isTaken) {
           // loopBoundaryAddress_ has been fetched whilst filling the loop
