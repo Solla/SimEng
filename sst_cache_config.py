@@ -26,7 +26,14 @@ SIMENG_CONFIG = os.environ.get(
     "SIMENG_CONFIG", "/workspace/SimEng/configs/c1_ultra_v096.yaml")
 EXECUTABLE = os.environ.get("SIMENG_EXE_PATH", "/workspace/dhrystone_aarch64")
 CLOCK_FREQ = "3.5GHz"
-CACHE_FREQ = "3.5Ghz"
+# Deep-dive knobs (default = original behaviour; unset env => no change).
+# L1_ACCESS/L1_MSHR/L1_TAG let us attribute the SST L1-hit latency
+# (measured 19cy vs 9.4cy standalone) to data-access vs MSHR-replay vs
+# structural FSM cost. Faithful target: real C1-Ultra L1 load-to-use ~4cy.
+CACHE_FREQ = os.environ.get("SST_CACHE_FREQ", "3.5GHz")  # was "3.5Ghz" (typo, harmless: UnitAlgebra is case-insensitive)
+L1_ACCESS = os.environ.get("SST_L1_ACCESS", "4")
+L1_MSHR = os.environ.get("SST_L1_MSHR", "")   # "" => memHierarchy intrapolates (=2 observed)
+L1_TAG = os.environ.get("SST_L1_TAG", "")     # "" => defaults to access_latency_cycles
 MEM_SIZE = "2GiB"
 CLW = "64"  # cache line width (bytes); must match cache_line_size
 
@@ -51,8 +58,8 @@ iface = cpu.setSubComponent("memory", "memHierarchy.standardInterface")
 
 # L1 (unified; 128KiB L1D geometry, 4-way, 4-cycle hit)
 l1cache = sst.Component("l1cache.mesi", "memHierarchy.Cache")
-l1cache.addParams({
-    "access_latency_cycles": "4",
+_l1p = {
+    "access_latency_cycles": L1_ACCESS,
     "cache_frequency": CACHE_FREQ,
     "replacement_policy": "lru",
     "coherence_protocol": "MESI",
@@ -63,7 +70,12 @@ l1cache.addParams({
     "debug": DEBUG,
     "debug_level": DEBUG_LEVEL,
     "verbose": "1"
-})
+}
+if L1_MSHR != "":
+    _l1p["mshr_latency_cycles"] = L1_MSHR
+if L1_TAG != "":
+    _l1p["tag_access_latency_cycles"] = L1_TAG
+l1cache.addParams(_l1p)
 l1toC = l1cache.setSubComponent("cpulink", "memHierarchy.MemLink")
 l1toL2 = l1cache.setSubComponent("memlink", "memHierarchy.MemLink")
 
