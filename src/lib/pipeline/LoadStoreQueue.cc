@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <list>
@@ -36,7 +37,9 @@ LoadStoreQueue::LoadStoreQueue(
       storeBandwidth_(storeBandwidth),
       totalLimit_(permittedRequests),
       // Set per-cycle limits for each request type
-      reqLimits_{permittedLoads, permittedStores} {}
+      reqLimits_{permittedLoads, permittedStores} {
+  lsqProfile_ = std::getenv("SIMENG_LSQ_PROFILE") != nullptr;
+}
 
 LoadStoreQueue::LoadStoreQueue(
     unsigned int maxLoadQueueSpace, unsigned int maxStoreQueueSpace,
@@ -59,7 +62,9 @@ LoadStoreQueue::LoadStoreQueue(
       storeBandwidth_(storeBandwidth),
       totalLimit_(permittedRequests),
       // Set per-cycle limits for each request type
-      reqLimits_{permittedLoads, permittedStores} {}
+      reqLimits_{permittedLoads, permittedStores} {
+  lsqProfile_ = std::getenv("SIMENG_LSQ_PROFILE") != nullptr;
+}
 
 unsigned int LoadStoreQueue::getLoadQueueSpace() const {
   if (combined_) {
@@ -173,15 +178,24 @@ void LoadStoreQueue::issueLoad(const std::shared_ptr<Instruction>& insn) {
     // completedLoads_ so it reaches the ReorderBuffer in program order, where
     // the exception is raised at commit (non-speculative) or discarded if the
     // load is flushed first.
+    if (lsqProfile_) lpLoadsEarly_++;
     completedLoads_.push(insn);
   } else {
+    // Issue the memory request as soon as the address is generated; the
+    // memory interface (FixedLatency standalone, or the SST cache element
+    // when running under SST) owns ALL access latency. Previously this
+    // scheduled the request at tickCounter_ + getLSQLatency() (the load
+    // uop's pipeline Execution-Latency), which was then summed in series
+    // with the memory interface's own Access-Latency for the SAME physical
+    // L1 access — double-counting one latency (8cy floor for a ~4cy L1
+    // load-to-use; see lsqprof). Issuing immediately keeps the model
+    // single-sourced and SST-compatible (SST would otherwise be
+    // double-counted too).
+    const uint64_t readyTick = tickCounter_;
     // Create a speculative entry for the load
-    requestLoadQueue_[tickCounter_ + insn->getLSQLatency()].push_back(
-        {{}, insn});
+    requestLoadQueue_[readyTick].push_back({{}, insn});
     // Store a reference to the reqAddresses queue for easy access
-    auto& reqAddrQueue = requestLoadQueue_[tickCounter_ + insn->getLSQLatency()]
-                             .back()
-                             .reqAddresses;
+    auto& reqAddrQueue = requestLoadQueue_[readyTick].back().reqAddresses;
     // Store load addresses temporarily so that conflictions are
     // only registered once on most recent (program order) store
     std::list<simeng::memory::MemoryAccessTarget> temp_load_addr(
@@ -230,6 +244,12 @@ void LoadStoreQueue::issueLoad(const std::shared_ptr<Instruction>& insn) {
 
     // Register active load
     requestedLoads_.emplace(insn->getSequenceId(), insn);
+
+    if (lsqProfile_) {
+      lpLoadsIssued_++;
+      lpInFlight_++;
+      lpIssueTick_[insn->getSequenceId()] = tickCounter_;
+    }
   }
 }
 
@@ -275,16 +295,17 @@ bool LoadStoreQueue::commitStore(const std::shared_ptr<Instruction>& uop) {
     return false;
   }
 
-  requestStoreQueue_[tickCounter_ + uop->getLSQLatency()].push_back({{}, uop});
+  // Schedule the store request immediately; the memory interface owns access
+  // latency (see issueLoad — single-sourced, SST-compatible).
+  const uint64_t readyTick = tickCounter_;
+  requestStoreQueue_[readyTick].push_back({{}, uop});
   // Submit request write to memory interface early as the architectural state
   // considers the store to be retired and thus its operation complete
   for (size_t i = 0; i < addresses.size(); i++) {
     memory_.requestWrite(addresses[i], data[i]);
     // Still add addresses to requestQueue_ to ensure contention of resources is
     // correctly simulated
-    requestStoreQueue_[tickCounter_ + uop->getLSQLatency()]
-        .back()
-        .reqAddresses.push(addresses[i]);
+    requestStoreQueue_[readyTick].back().reqAddresses.push(addresses[i]);
   }
 
   // Check all loads that have requested memory
@@ -339,6 +360,7 @@ bool LoadStoreQueue::commitStore(const std::shared_ptr<Instruction>& uop) {
             if (load->isStoreData()) {
               supplyStoreData(load);
             }
+            lpRecordComplete_(load, /*viaForward=*/true);
             completedLoads_.push(load);
           }
         }
@@ -389,6 +411,13 @@ void LoadStoreQueue::purgeFlushed() {
   while (itLd != loadQueue_.end()) {
     const auto& entry = *itLd;
     if (entry->isFlushed()) {
+      if (lsqProfile_) {
+        auto pit = lpIssueTick_.find(entry->getSequenceId());
+        if (pit != lpIssueTick_.end()) {
+          lpIssueTick_.erase(pit);
+          if (lpInFlight_ > 0) lpInFlight_--;
+        }
+      }
       requestedLoads_.erase(entry->getSequenceId());
       itLd = loadQueue_.erase(itLd);
     } else {
@@ -630,6 +659,7 @@ void LoadStoreQueue::tick() {
       if (!load->exceptionEncountered() && load->isStoreData()) {
         supplyStoreData(load);
       }
+      lpRecordComplete_(load, /*viaForward=*/false);
       completedLoads_.push(load);
     }
   }
@@ -655,6 +685,17 @@ void LoadStoreQueue::tick() {
 
     count++;
   }
+
+  // Sample memory-level parallelism: average in-flight loads over ticks that
+  // had any load outstanding. ~1.0 means dependent loads serialise (the run
+  // is bound by per-load latency, not throughput); much larger means loads
+  // overlap and latency is hidden.
+  if (lsqProfile_ && lpInFlight_ > 0) {
+    lpOutstandingSum_ += static_cast<uint64_t>(lpInFlight_);
+    lpOutstandingSamples_++;
+    if (static_cast<uint64_t>(lpInFlight_) > lpOutstandingMax_)
+      lpOutstandingMax_ = static_cast<uint64_t>(lpInFlight_);
+  }
 }
 
 std::shared_ptr<Instruction> LoadStoreQueue::getViolatingLoad() const {
@@ -662,6 +703,74 @@ std::shared_ptr<Instruction> LoadStoreQueue::getViolatingLoad() const {
 }
 
 bool LoadStoreQueue::isCombined() const { return combined_; }
+
+void LoadStoreQueue::lpRecordComplete_(
+    const std::shared_ptr<Instruction>& load, bool viaForward) {
+  if (!lsqProfile_) return;
+  const uint64_t seqId = load->getSequenceId();
+  auto it = lpIssueTick_.find(seqId);
+  // A forwarded load may complete without ever reaching the memory path; it
+  // still has an issue stamp from issueLoad(). If absent (e.g. completed twice
+  // across multi-address supply) skip to avoid double-counting.
+  if (it == lpIssueTick_.end()) return;
+  const uint64_t lat = tickCounter_ - it->second;
+  lpIssueTick_.erase(it);
+  if (lpInFlight_ > 0) lpInFlight_--;
+  lpLatSum_ += lat;
+  if (viaForward)
+    lpLoadsViaFwd_++;
+  else
+    lpLoadsViaMem_++;
+  size_t b;
+  if (lat == 0)
+    b = 0;
+  else if (lat <= 2)
+    b = 1;
+  else if (lat <= 4)
+    b = 2;
+  else if (lat <= 8)
+    b = 3;
+  else if (lat <= 16)
+    b = 4;
+  else if (lat <= 32)
+    b = 5;
+  else if (lat <= 64)
+    b = 6;
+  else
+    b = 7;
+  lpLatBucket_[b]++;
+}
+
+std::vector<std::pair<std::string, std::string>>
+LoadStoreQueue::getLsqProfile() const {
+  static const char* kBucket[8] = {"0",     "1-2",   "3-4",   "5-8",
+                                   "9-16",  "17-32", "33-64", "65+"};
+  std::vector<std::pair<std::string, std::string>> p;
+  p.emplace_back("lsqprof.loadsIssued", std::to_string(lpLoadsIssued_));
+  p.emplace_back("lsqprof.loadsEarlyNoAddr", std::to_string(lpLoadsEarly_));
+  p.emplace_back("lsqprof.completedViaMem", std::to_string(lpLoadsViaMem_));
+  p.emplace_back("lsqprof.completedViaForward",
+                 std::to_string(lpLoadsViaFwd_));
+  const uint64_t done = lpLoadsViaMem_ + lpLoadsViaFwd_;
+  // Average issue->complete latency (x1000, integer-formatted).
+  uint64_t avgLatMilli = done ? (lpLatSum_ * 1000ULL) / done : 0;
+  p.emplace_back("lsqprof.avgLoadLatency_milli",
+                 std::to_string(avgLatMilli));
+  // Average in-flight loads over ticks with work = memory-level parallelism.
+  // ~1.0 => dependent loads serialise (latency-bound); >>1 => they overlap.
+  uint64_t avgMlpMilli =
+      lpOutstandingSamples_
+          ? (lpOutstandingSum_ * 1000ULL) / lpOutstandingSamples_
+          : 0;
+  p.emplace_back("lsqprof.avgInFlight_milli", std::to_string(avgMlpMilli));
+  p.emplace_back("lsqprof.maxInFlight", std::to_string(lpOutstandingMax_));
+  p.emplace_back("lsqprof.busyTicks",
+                 std::to_string(lpOutstandingSamples_));
+  for (size_t i = 0; i < 8; i++)
+    p.emplace_back(std::string("lsqprof.lat.") + kBucket[i],
+                   std::to_string(lpLatBucket_[i]));
+  return p;
+}
 
 }  // namespace pipeline
 }  // namespace simeng

@@ -294,13 +294,12 @@ TEST_P(LoadStoreQueueTest, Load) {
   queue.addLoad(loadUopPtr);
   queue.startLoad(loadUopPtr);
 
-  // Given 3 cycle latency, no requests should occur in the first two ticks of
-  // the LSQ
-  EXPECT_CALL(dataMemory, requestRead(_, _)).Times(0);
-  queue.tick();
-  queue.tick();
-
-  // Check that a read request is made to the memory interface
+  // The LSQ now issues the memory request as soon as the address is
+  // generated; the memory interface (FixedLatency standalone, or the SST
+  // cache element under SST) owns ALL access latency. getLSQLatency() no
+  // longer gates request submission, so there is no LSQ-side pre-delay to
+  // sum in series with the memory interface's own latency (the previous
+  // behaviour double-counted one physical L1 access latency).
   EXPECT_CALL(dataMemory, requestRead(addresses[0], _)).Times(1);
 
   // Expect a check against finished reads and return the result
@@ -313,7 +312,7 @@ TEST_P(LoadStoreQueueTest, Load) {
                          Property(&RegisterValue::get<uint8_t>, data[0])))
       .Times(1);
 
-  // Tick the queue to complete the load
+  // A single tick now issues the request and completes the load.
   queue.tick();
 
   EXPECT_EQ(completionSlots[0].getTailSlots()[0].get(), loadUop);

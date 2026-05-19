@@ -123,7 +123,18 @@ class LoadStoreQueue {
    * memory order violation. */
   std::shared_ptr<Instruction> getViolatingLoad() const;
 
+  /** Diagnostic snapshot of load-latency / memory-level-parallelism counters,
+   * emitted as stat lines when SIMENG_LSQ_PROFILE is set. Pure observation,
+   * no behavioural effect. */
+  std::vector<std::pair<std::string, std::string>> getLsqProfile() const;
+
  private:
+  /** Record a load completing (memory return or store-to-load forward):
+   * bucket its issue->complete latency and update in-flight accounting.
+   * No-op when lsqProfile_ is false. */
+  void lpRecordComplete_(const std::shared_ptr<Instruction>& load,
+                         bool viaForward);
+
   /** The load queue: holds in-flight load instructions. */
   std::deque<std::shared_ptr<Instruction>> loadQueue_;
 
@@ -226,6 +237,34 @@ class LoadStoreQueue {
 
   /** The number of loads and stores permitted per cycle. */
   std::array<uint16_t, 2> reqLimits_;
+
+  /** --- Diagnostic counters (SIMENG_LSQ_PROFILE). Pure observation; gated by
+   * lsqProfile_ so cost is near-zero when disabled. --- */
+  /** Whether load-latency profiling is enabled (env-set, cached in ctor). */
+  bool lsqProfile_ = false;
+  /** Loads that went through the memory-request path (had addresses). */
+  uint64_t lpLoadsIssued_ = 0;
+  /** Loads that early-executed with no addresses (zero memory latency). */
+  uint64_t lpLoadsEarly_ = 0;
+  /** Loads completed by a memory return. */
+  uint64_t lpLoadsViaMem_ = 0;
+  /** Loads completed by store-to-load forwarding (conflictionMap_). */
+  uint64_t lpLoadsViaFwd_ = 0;
+  /** Loads issued but not yet completed (memory-level parallelism gauge). */
+  int64_t lpInFlight_ = 0;
+  /** Sum of lpInFlight_ sampled once per tick (for average MLP). */
+  uint64_t lpOutstandingSum_ = 0;
+  /** Number of per-tick samples taken (ticks with >=1 load in flight). */
+  uint64_t lpOutstandingSamples_ = 0;
+  /** Peak simultaneous in-flight loads. */
+  uint64_t lpOutstandingMax_ = 0;
+  /** Sum of every completed load's issue->complete latency (for average). */
+  uint64_t lpLatSum_ = 0;
+  /** Issue->complete latency histogram: 0, 1-2, 3-4, 5-8, 9-16, 17-32,
+   * 33-64, 65+ cycles. */
+  std::array<uint64_t, 8> lpLatBucket_ = {0, 0, 0, 0, 0, 0, 0, 0};
+  /** Per-load issue tick (seqId -> tickCounter_ at issue), profiling only. */
+  std::unordered_map<uint64_t, uint64_t> lpIssueTick_;
 };
 
 }  // namespace pipeline

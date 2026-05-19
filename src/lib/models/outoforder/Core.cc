@@ -509,6 +509,13 @@ std::map<std::string, std::string> Core::getStats() const {
       stats[kv.first] = kv.second;
   }
 
+  // Optional LSQ load-latency / memory-level-parallelism diagnostics
+  // (no behavioural effect).
+  if (std::getenv("SIMENG_LSQ_PROFILE") != nullptr) {
+    for (const auto& kv : loadStoreQueue_.getLsqProfile())
+      stats[kv.first] = kv.second;
+  }
+
   return stats;
 }
 
