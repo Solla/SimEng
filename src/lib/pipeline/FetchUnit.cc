@@ -176,8 +176,13 @@ void FetchUnit::tick() {
     // Create branch prediction after identifing instruction type
     // (e.g. RET, BL, etc).
     BranchPrediction prediction = {false, 0};
+    // Cache the branch type from a single getBranchType() query; reused
+    // below for taken-branch profiling. Querying twice breaks strict
+    // (WillOnce) mock expectations in the FetchUnit unit tests.
+    BranchType branchType = BranchType::Unknown;
     if (macroOp[0]->isBranch()) {
-      prediction = branchPredictor_.predict(pc_, macroOp[0]->getBranchType(),
+      branchType = macroOp[0]->getBranchType();
+      prediction = branchPredictor_.predict(pc_, branchType,
                                             macroOp[0]->getKnownOffset());
       macroOp[0]->setBranchPrediction(prediction);
     }
@@ -259,7 +264,7 @@ void FetchUnit::tick() {
       // Diagnostic: a predicted-taken branch always truncates the fetch
       // group here. Attribute it to its branch type and tally the empty
       // trailing slots it cost this cycle (pure observation).
-      size_t bt = static_cast<size_t>(macroOp[0]->getBranchType());
+      size_t bt = static_cast<size_t>(branchType);
       if (bt >= takenByType_.size()) bt = takenByType_.size() - 1;
       takenByType_[bt]++;
       if (slot + 1 < output_.getWidth()) {
