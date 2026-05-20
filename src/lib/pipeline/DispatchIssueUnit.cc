@@ -59,6 +59,11 @@ DispatchIssueUnit::DispatchIssueUnit(
     flushed_.emplace(i, std::initializer_list<std::shared_ptr<Instruction>>{});
 
   dispatches_ = std::make_unique<uint16_t[]>(reservationStations_.size());
+  perRsFullCycles_.assign(reservationStations_.size(), 0);
+  perRsOccSum_.assign(reservationStations_.size(), 0);
+  perRsBlockCount_.assign(reservationStations_.size(), 0);
+  perRsBlockByCapacity_.assign(reservationStations_.size(), 0);
+  perRsBlockByDispatchRate_.assign(reservationStations_.size(), 0);
 }
 
 void DispatchIssueUnit::tick() {
@@ -66,6 +71,14 @@ void DispatchIssueUnit::tick() {
 
   // Reset the array
   std::fill_n(dispatches_.get(), reservationStations_.size(), 0);
+  bool dispatchedThisTick = false;
+
+  // Per-RS occupancy sample (once per tick, before dispatch processing).
+  for (size_t i = 0; i < reservationStations_.size(); i++) {
+    perRsOccSum_[i] += reservationStations_[i].currentSize;
+    if (reservationStations_[i].currentSize >= reservationStations_[i].capacity)
+      perRsFullCycles_[i]++;
+  }
 
   for (size_t slot = 0; slot < input_.getWidth(); slot++) {
     auto& uop = input_.getHeadSlots()[slot];
@@ -99,6 +112,21 @@ void DispatchIssueUnit::tick() {
     if (!anyRsAvailable) {
       input_.stall(true);
       rsStalls_++;
+      // Attribute: which reachable RS(s) were full for this stalling uop?
+      // Track capacity vs dispatch-rate causes separately.
+      for (uint16_t p : supportedPorts) {
+        if (p >= portMapping_.size()) continue;
+        uint16_t rsIdx = portMapping_[p].first;
+        const ReservationStation& rs = reservationStations_[rsIdx];
+        bool capFull = rs.currentSize >= rs.capacity;
+        bool drFull = dispatches_[rsIdx] >= rs.dispatchRate;
+        if (capFull || drFull) {
+          perRsBlockCount_[rsIdx]++;
+          if (capFull) perRsBlockByCapacity_[rsIdx]++;
+          if (drFull && !capFull) perRsBlockByDispatchRate_[rsIdx]++;
+        }
+      }
+      if (dispatchedThisTick) bandwidthLimitedCycles_++;
       return;
     }
     // Allocate issue port to uop
@@ -122,6 +150,12 @@ void DispatchIssueUnit::tick() {
       portAllocator_.deallocate(port);
       input_.stall(true);
       rsStalls_++;
+      // Attribute post-allocator stall to the chosen RS.
+      perRsBlockCount_[RS_Index]++;
+      if (rs.currentSize >= rs.capacity) perRsBlockByCapacity_[RS_Index]++;
+      else if (dispatches_[RS_Index] >= rs.dispatchRate)
+        perRsBlockByDispatchRate_[RS_Index]++;
+      if (dispatchedThisTick) bandwidthLimitedCycles_++;
       return;
     }
 
@@ -157,6 +191,7 @@ void DispatchIssueUnit::tick() {
     // Increment dispatches made and RS occupied entries size
     dispatches_[RS_Index]++;
     rs.currentSize++;
+    dispatchedThisTick = true;
 
     if (ready) {
       rs.ports[RS_Port].ready.push_back(std::move(uop));

@@ -57,7 +57,8 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
           config["LSQ-L1-Interface"]["Permitted-Loads-Per-Cycle"]
               .as<uint16_t>(),
           config["LSQ-L1-Interface"]["Permitted-Stores-Per-Cycle"]
-              .as<uint16_t>()),
+              .as<uint16_t>(),
+          config["LSQ-L1-Interface"]["Load-To-Load-Forwarding"].as<bool>()),
       fetchUnit_(fetchToDecodeBuffer_, instructionMemory,
                  config["Fetch"]["Fetch-Block-Size"].as<uint16_t>(), isa,
                  branchPredictor),
@@ -514,6 +515,53 @@ std::map<std::string, std::string> Core::getStats() const {
   if (std::getenv("SIMENG_LSQ_PROFILE") != nullptr) {
     for (const auto& kv : loadStoreQueue_.getLsqProfile())
       stats[kv.first] = kv.second;
+  }
+
+  // Optional per-RS dispatch-stall attribution (no behavioural effect).
+  if (std::getenv("SIMENG_RS_PROFILE") != nullptr) {
+    const auto& full = dispatchIssueUnit_.getPerRsFullCycles();
+    const auto& occ = dispatchIssueUnit_.getPerRsOccSum();
+    const auto& blk = dispatchIssueUnit_.getPerRsBlockCount();
+    const auto& byCap = dispatchIssueUnit_.getPerRsBlockByCapacity();
+    const auto& byDR = dispatchIssueUnit_.getPerRsBlockByDispatchRate();
+    auto rsN = dispatchIssueUnit_.getRsCount();
+    for (uint16_t i = 0; i < rsN; i++) {
+      std::string p = "rsprof.rs" + std::to_string(i) + ".";
+      stats[p + "capacity"] =
+          std::to_string(dispatchIssueUnit_.getRsCapacity(i));
+      stats[p + "dispatchRate"] =
+          std::to_string(dispatchIssueUnit_.getRsDispatchRate(i));
+      stats[p + "fullCycles"] = std::to_string(full[i]);
+      stats[p + "avgOccupancy"] =
+          std::to_string(ticks_ > 0 ? static_cast<double>(occ[i]) / ticks_
+                                    : 0.0);
+      stats[p + "blockCount"] = std::to_string(blk[i]);
+      stats[p + "blockByCapacity"] = std::to_string(byCap[i]);
+      stats[p + "blockByDispatchRate"] = std::to_string(byDR[i]);
+    }
+    stats["rsprof.bandwidthLimitedCycles"] =
+        std::to_string(dispatchIssueUnit_.getBandwidthLimitedCycles());
+  }
+
+  // Optional per-RS dispatch profiling (no behavioural effect).
+  if (std::getenv("SIMENG_RS_PROFILE") != nullptr) {
+    const auto& full = dispatchIssueUnit_.getPerRsFullCycles();
+    const auto& occ = dispatchIssueUnit_.getPerRsOccSum();
+    const auto& blk = dispatchIssueUnit_.getPerRsBlockCount();
+    uint16_t n = dispatchIssueUnit_.getRsCount();
+    uint64_t cyc = ticks_ ? ticks_ : 1;
+    for (uint16_t i = 0; i < n; i++) {
+      std::ostringstream avg;
+      avg << std::fixed << std::setprecision(2)
+          << (static_cast<double>(occ[i]) / static_cast<double>(cyc));
+      stats["rs[" + std::to_string(i) + "].cap"] =
+          std::to_string(dispatchIssueUnit_.getRsCapacity(i));
+      stats["rs[" + std::to_string(i) + "].fullCycles"] =
+          std::to_string(full[i]);
+      stats["rs[" + std::to_string(i) + "].avgOccupancy"] = avg.str();
+      stats["rs[" + std::to_string(i) + "].blockOnStall"] =
+          std::to_string(blk[i]);
+    }
   }
 
   return stats;

@@ -28,22 +28,28 @@ uint16_t RSAwarePortAllocator::allocate(const std::vector<uint16_t>& ports) {
   rsFreeSpaces.clear();
   rsSizes_(rsFreeSpaces);
 
+  // Select port by lexicographic (rsQueueSize, perPortInFlightWeight). The
+  // outer rsQueueSize chooses the least-loaded RS reachable; the inner weight
+  // tie-breaks within an RS so per-port in-flight counts are actually
+  // balanced. Without this tie-break (formerly guarded by strict-less on
+  // rsQueueSize), every uop in a multi-port single-RS group (e.g. all INT
+  // uops in RS1) was steered to the first port listed — throttling issue
+  // throughput to that one port and starving the others.
   for (const auto& portIndex : ports) {
     auto rsIndex = rsArrangement_[portIndex].first;
     auto rsSize = rsArrangement_[portIndex].second;
     auto rsFreeSpace = rsFreeSpaces[rsIndex];
     auto rsQueueSize = (rsSize - rsFreeSpace);
 
-    if (rsQueueSize < bestRSQueueSize) {
-      bestRSQueueSize = rsQueueSize;
+    bool better = !foundPort || rsQueueSize < bestRSQueueSize ||
+                  (rsQueueSize == bestRSQueueSize &&
+                   weights[portIndex] < bestWeight);
+    if (better) {
+      foundPort = true;
       foundRS = true;
-
-      // Search for the lowest-weighted port available
-      if (!foundPort || weights[portIndex] < bestWeight) {
-        foundPort = true;
-        bestWeight = weights[portIndex];
-        bestPort = portIndex;
-      }
+      bestRSQueueSize = rsQueueSize;
+      bestWeight = weights[portIndex];
+      bestPort = portIndex;
     }
   }
 

@@ -152,6 +152,53 @@ class DispatchIssueUnit {
   /** The number of times an instruction was unable to issue due to a busy port.
    */
   uint64_t portBusyStalls_ = 0;
+
+  /** Per-RS cycles spent at full capacity (sampled once per tick). */
+  std::vector<uint64_t> perRsFullCycles_;
+
+  /** Per-RS sum of currentSize each tick (for average occupancy). */
+  std::vector<uint64_t> perRsOccSum_;
+
+  /** Per-RS count of stalls where this RS was reachable-and-full for the
+   * stalling uop. May double-count when a uop's supportedPorts span multiple
+   * RSs all of which are full. */
+  std::vector<uint64_t> perRsBlockCount_;
+
+  /** Per-RS attribution: stalls where this RS was at capacity. */
+  std::vector<uint64_t> perRsBlockByCapacity_;
+
+  /** Per-RS attribution: stalls where this RS was at dispatch-rate cap. */
+  std::vector<uint64_t> perRsBlockByDispatchRate_;
+
+  /** Cycles where dispatch was bandwidth-limited (one or more uops stalled
+   * but at least one was successfully dispatched in the same tick). */
+  uint64_t bandwidthLimitedCycles_ = 0;
+
+ public:
+  /** Retrieve per-RS counters: full-cycles, occupancy sum, block-on-stall. */
+  const std::vector<uint64_t>& getPerRsFullCycles() const {
+    return perRsFullCycles_;
+  }
+  const std::vector<uint64_t>& getPerRsOccSum() const { return perRsOccSum_; }
+  const std::vector<uint64_t>& getPerRsBlockCount() const {
+    return perRsBlockCount_;
+  }
+  uint16_t getRsCount() const {
+    return static_cast<uint16_t>(reservationStations_.size());
+  }
+  uint16_t getRsCapacity(uint16_t i) const {
+    return reservationStations_[i].capacity;
+  }
+  uint16_t getRsDispatchRate(uint16_t i) const {
+    return reservationStations_[i].dispatchRate;
+  }
+  const std::vector<uint64_t>& getPerRsBlockByCapacity() const {
+    return perRsBlockByCapacity_;
+  }
+  const std::vector<uint64_t>& getPerRsBlockByDispatchRate() const {
+    return perRsBlockByDispatchRate_;
+  }
+  uint64_t getBandwidthLimitedCycles() const { return bandwidthLimitedCycles_; }
 };
 
 }  // namespace pipeline
