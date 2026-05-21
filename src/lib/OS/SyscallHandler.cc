@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
+#include <iostream>
 #include <random>
 
 #include "simeng/OS/Constants.hh"
@@ -35,6 +37,18 @@ void SyscallHandler::tick() {
 void SyscallHandler::handleSyscall() {
   // Update currentInfo_
   currentInfo_ = syscallQueue_.front();
+  static const bool kSyscallTrace =
+      std::getenv("SIMENG_SYSCALL_TRACE") != nullptr;
+  if (kSyscallTrace) {
+    std::cerr << "[SimEng:SyscallTrace] id=" << currentInfo_.syscallId
+              << " a0=0x" << std::hex
+              << currentInfo_.registerArguments[0].get<uint64_t>()
+              << " a1=0x"
+              << currentInfo_.registerArguments[1].get<uint64_t>()
+              << " a2=0x"
+              << currentInfo_.registerArguments[2].get<uint64_t>()
+              << std::dec << std::endl;
+  }
   ProcessStateChange stateChange = {};
   switch (currentInfo_.syscallId) {
     case 29: {  // ioctl

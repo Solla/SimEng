@@ -57,8 +57,7 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
           config["LSQ-L1-Interface"]["Permitted-Loads-Per-Cycle"]
               .as<uint16_t>(),
           config["LSQ-L1-Interface"]["Permitted-Stores-Per-Cycle"]
-              .as<uint16_t>(),
-          config["LSQ-L1-Interface"]["Load-To-Load-Forwarding"].as<bool>()),
+              .as<uint16_t>()),
       fetchUnit_(fetchToDecodeBuffer_, instructionMemory,
                  config["Fetch"]["Fetch-Block-Size"].as<uint16_t>(), isa,
                  branchPredictor),
@@ -538,6 +537,10 @@ std::map<std::string, std::string> Core::getStats() const {
       stats[p + "blockCount"] = std::to_string(blk[i]);
       stats[p + "blockByCapacity"] = std::to_string(byCap[i]);
       stats[p + "blockByDispatchRate"] = std::to_string(byDR[i]);
+      stats[p + "dispatched"] = std::to_string(
+          dispatchIssueUnit_.getPerRsDispatched()[i]);
+      stats[p + "dispatchedCrossRS"] = std::to_string(
+          dispatchIssueUnit_.getPerRsDispatchedCrossRS()[i]);
     }
     stats["rsprof.bandwidthLimitedCycles"] =
         std::to_string(dispatchIssueUnit_.getBandwidthLimitedCycles());

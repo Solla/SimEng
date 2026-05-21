@@ -1,7 +1,9 @@
 #include "simeng/pipeline/DispatchIssueUnit.hh"
 
 #include <algorithm>
+#include <cstdlib>
 #include <iostream>
+#include <unordered_set>
 
 #include "simeng/config/SimInfo.hh"
 #include "simeng/config/yaml/ryml.hh"
@@ -64,6 +66,8 @@ DispatchIssueUnit::DispatchIssueUnit(
   perRsBlockCount_.assign(reservationStations_.size(), 0);
   perRsBlockByCapacity_.assign(reservationStations_.size(), 0);
   perRsBlockByDispatchRate_.assign(reservationStations_.size(), 0);
+  perRsDispatched_.assign(reservationStations_.size(), 0);
+  perRsDispatchedCrossRS_.assign(reservationStations_.size(), 0);
 }
 
 void DispatchIssueUnit::tick() {
@@ -192,6 +196,40 @@ void DispatchIssueUnit::tick() {
     dispatches_[RS_Index]++;
     rs.currentSize++;
     dispatchedThisTick = true;
+
+    // Per-RS dispatch accounting. Cross-RS flag = supportedPorts spanned more
+    // than one RS, i.e. the allocator chose a routing policy rather than
+    // having a single legal RS to place this uop into.
+    perRsDispatched_[RS_Index]++;
+    {
+      bool sawOther = false;
+      for (uint16_t p : supportedPorts) {
+        if (p >= portMapping_.size()) continue;
+        if (portMapping_[p].first != RS_Index) { sawOther = true; break; }
+      }
+      if (sawOther) perRsDispatchedCrossRS_[RS_Index]++;
+    }
+    // Once-per-process trace: dump the supportedPorts of the first ~20 unique
+    // group values we see, env-gated. Lets us prove whether group-derived
+    // routing is the bug.
+    if (std::getenv("SIMENG_PORTS_TRACE") != nullptr) {
+      static std::unordered_set<uint16_t> seenGroups;
+      uint16_t g = uop->getGroup();
+      if (seenGroups.size() < 30 && seenGroups.insert(g).second) {
+        std::cerr << "[ports-trace] group=" << g
+                  << " isBranch=" << uop->isBranch()
+                  << " isLoad=" << uop->isLoad()
+                  << " isStoreAddr=" << uop->isStoreAddress()
+                  << " supportedPorts=[";
+        for (uint16_t p : supportedPorts) {
+          uint16_t rs = (p < portMapping_.size()) ? portMapping_[p].first
+                                                  : (uint16_t)0xFFFF;
+          std::cerr << " p" << p << "(rs" << rs << ")";
+        }
+        std::cerr << " ] -> chose port=" << port
+                  << " rs=" << RS_Index << "\n";
+      }
+    }
 
     if (ready) {
       rs.ports[RS_Port].ready.push_back(std::move(uop));

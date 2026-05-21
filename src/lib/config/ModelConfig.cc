@@ -726,10 +726,10 @@ void ModelConfig::setExpectations(bool isDefault) {
 
   expectations_["Ports"][wildcard].addChild(
       ExpectationNode::createExpectation<std::string>(
-          "ALL", "Instruction-Group-Support", true));
-  expectations_["Ports"][wildcard]["Instruction-Group-Support"].setValueSet(
+          "ALL", "Instruction-Support", true));
+  expectations_["Ports"][wildcard]["Instruction-Support"].setValueSet(
       groupOptions_);
-  expectations_["Ports"][wildcard]["Instruction-Group-Support"].setAsSequence();
+  expectations_["Ports"][wildcard]["Instruction-Support"].setAsSequence();
 
   // Get the upper bound of what the opcode value can be based on the ISA
   uint16_t maxOpcode = 0;
@@ -996,7 +996,7 @@ void ModelConfig::postValidation() {
     }
     // Read in each group and place its corresponding group number into the
     // new config option
-    for (ryml::NodeRef child : node["Instruction-Group-Support"]) {
+    for (ryml::NodeRef child : node["Instruction-Support"]) {
       ryml::NodeRef newChild =
           node["Instruction-Group-Support-Nums"].append_child();
       newChild << groupMapping_[child.as<std::string>()];

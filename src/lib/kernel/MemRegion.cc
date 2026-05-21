@@ -88,6 +88,12 @@ uint64_t MemRegion::updateBrkRegion(uint64_t brk) {
   if (brk < heapRegion_->startBrk) {
     std::cerr << "[SimEng:MemRegion] Attemped to deallocate more memory than "
                  "is available to the process heap region."
+              << " requested_brk=0x" << std::hex << brk
+              << " current_brk=0x" << heapRegion_->brk
+              << " startBrk=0x" << heapRegion_->startBrk
+              << " heap_end=0x" << heapRegion_->end
+              << std::dec
+              << " shrink_by=" << (int64_t)(heapRegion_->startBrk - brk)
               << std::endl;
     return heapRegion_->brk;
   }

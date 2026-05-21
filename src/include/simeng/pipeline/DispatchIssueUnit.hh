@@ -170,6 +170,13 @@ class DispatchIssueUnit {
   /** Per-RS attribution: stalls where this RS was at dispatch-rate cap. */
   std::vector<uint64_t> perRsBlockByDispatchRate_;
 
+  /** Per-RS count of ops dispatched into this RS. */
+  std::vector<uint64_t> perRsDispatched_;
+
+  /** Per-RS count of ops dispatched here where supportedPorts spanned multiple
+   * RSs (i.e. the allocator made a routing choice, not forced). */
+  std::vector<uint64_t> perRsDispatchedCrossRS_;
+
   /** Cycles where dispatch was bandwidth-limited (one or more uops stalled
    * but at least one was successfully dispatched in the same tick). */
   uint64_t bandwidthLimitedCycles_ = 0;
@@ -197,6 +204,12 @@ class DispatchIssueUnit {
   }
   const std::vector<uint64_t>& getPerRsBlockByDispatchRate() const {
     return perRsBlockByDispatchRate_;
+  }
+  const std::vector<uint64_t>& getPerRsDispatched() const {
+    return perRsDispatched_;
+  }
+  const std::vector<uint64_t>& getPerRsDispatchedCrossRS() const {
+    return perRsDispatchedCrossRS_;
   }
   uint64_t getBandwidthLimitedCycles() const { return bandwidthLimitedCycles_; }
 };
