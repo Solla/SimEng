@@ -49,37 +49,37 @@ LSQ-L1-Interface:
 Ports:
   0:
     Portname: B0
-    Instruction-Group-Support:
+    Instruction-Support:
     - BRANCH
   1:
     Portname: B1
-    Instruction-Group-Support:
+    Instruction-Support:
     - BRANCH
   2:
     Portname: SX0
-    Instruction-Group-Support:
+    Instruction-Support:
     - INT_SIMPLE_ARTH_NOSHIFT
     - INT_SIMPLE_LOGICAL
     - INT_SIMPLE_CMP
   3:
     Portname: SX1
-    Instruction-Group-Support:
+    Instruction-Support:
     - INT_SIMPLE_ARTH_NOSHIFT
     - INT_SIMPLE_LOGICAL
     - INT_SIMPLE_CMP
   4:
     Portname: SX2
-    Instruction-Group-Support:
+    Instruction-Support:
     - INT_SIMPLE_ARTH_NOSHIFT
     - INT_SIMPLE_LOGICAL
   5:
     Portname: SX3
-    Instruction-Group-Support:
+    Instruction-Support:
     - INT_SIMPLE_ARTH_NOSHIFT
     - INT_SIMPLE_LOGICAL
   6:
     Portname: MX0
-    Instruction-Group-Support:
+    Instruction-Support:
     - INT_SIMPLE_ARTH
     - INT_SIMPLE_LOGICAL
     - INT_SIMPLE_CMP
@@ -88,7 +88,7 @@ Ports:
     - PREDICATE
   7:
     Portname: MX1
-    Instruction-Group-Support:
+    Instruction-Support:
     - INT_SIMPLE_ARTH
     - INT_SIMPLE_LOGICAL
     - INT_SIMPLE_CMP
@@ -96,29 +96,29 @@ Ports:
     - PREDICATE
   8:
     Portname: LS0
-    Instruction-Group-Support:
+    Instruction-Support:
     - LOAD
     - STORE_ADDRESS
   9:
     Portname: LS1
-    Instruction-Group-Support:
+    Instruction-Support:
     - LOAD
     - STORE_ADDRESS
   10:
     Portname: LD
-    Instruction-Group-Support:
+    Instruction-Support:
     - LOAD
   11:
     Portname: SD0
-    Instruction-Group-Support:
+    Instruction-Support:
     - STORE_DATA_INT
   12:
     Portname: SD1
-    Instruction-Group-Support:
+    Instruction-Support:
     - STORE_DATA_INT
   13:
     Portname: VX0
-    Instruction-Group-Support:
+    Instruction-Support:
     - SVE_SIMPLE_ARTH
     - SVE_SIMPLE_LOGICAL
     - SVE_SIMPLE_CMP
@@ -137,7 +137,7 @@ Ports:
     - STORE_DATA_SVE
   14:
     Portname: VX1
-    Instruction-Group-Support:
+    Instruction-Support:
     - SVE_SIMPLE_ARTH
     - SVE_SIMPLE_LOGICAL
     - SVE_MUL
@@ -152,7 +152,7 @@ Ports:
     - STORE_DATA_SVE
   15:
     Portname: VX2
-    Instruction-Group-Support:
+    Instruction-Support:
     - SVE_SIMPLE_ARTH
     - SVE_SIMPLE_LOGICAL
     - SVE_SIMPLE_CVT
@@ -166,7 +166,7 @@ Ports:
     - VECTOR_SIMPLE_CVT
   16:
     Portname: VX3
-    Instruction-Group-Support:
+    Instruction-Support:
     - SVE_SIMPLE_ARTH
     - SVE_SIMPLE_LOGICAL
     - SVE_MUL

@@ -58,111 +58,111 @@ LSQ-L1-Interface:
 Ports:
   0:
     Portname: Branch0
-    Instruction-Group-Support:
+    Instruction-Support:
       - BRANCH
   1:
     Portname: Branch1
-    Instruction-Group-Support:
+    Instruction-Support:
       - BRANCH
   2:
     Portname: Branch2
-    Instruction-Group-Support:
+    Instruction-Support:
       - BRANCH
   3:
     Portname: INT_S0
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
   4:
     Portname: INT_S1
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
       - INT_MUL
   5:
     Portname: INT_S2
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
   6:
     Portname: INT_S3
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
       - INT_MUL
   7:
     Portname: INT_S4
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
   8:
     Portname: INT_S5
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
   9:
     Portname: INT_M0
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
       - INT_DIV_OR_SQRT
   10:
     Portname: INT_M1
-    Instruction-Group-Support:
+    Instruction-Support:
       - INT_SIMPLE
       - INT_MUL
   11:
     Portname: LS0
-    Instruction-Group-Support:
+    Instruction-Support:
       - LOAD
       - STORE
   12:
     Portname: LS1
-    Instruction-Group-Support:
+    Instruction-Support:
       - LOAD
       - STORE
   13:
     Portname: L2
-    Instruction-Group-Support:
+    Instruction-Support:
       - LOAD
   14:
     Portname: L3
-    Instruction-Group-Support:
+    Instruction-Support:
       - LOAD
   15:
     Portname: D0
-    Instruction-Group-Support:
+    Instruction-Support:
       - STORE
   16:
     Portname: D1
-    Instruction-Group-Support:
+    Instruction-Support:
       - STORE
   17:
     Portname: V0
-    Instruction-Group-Support:
+    Instruction-Support:
       - FP
       - VECTOR
       - SCALAR
   18:
     Portname: V1
-    Instruction-Group-Support:
+    Instruction-Support:
       - FP
       - VECTOR
       - SCALAR
   19:
     Portname: V2
-    Instruction-Group-Support:
+    Instruction-Support:
       - FP
       - VECTOR
       - SCALAR
   20:
     Portname: V3
-    Instruction-Group-Support:
+    Instruction-Support:
       - FP
       - VECTOR
       - SCALAR
   21:
     Portname: V4
-    Instruction-Group-Support:
+    Instruction-Support:
       - FP
       - VECTOR
       - SCALAR
   22:
     Portname: V5
-    Instruction-Group-Support:
+    Instruction-Support:
       - FP
       - VECTOR
       - SCALAR
