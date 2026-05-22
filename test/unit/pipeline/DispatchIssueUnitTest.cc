@@ -293,8 +293,11 @@ TEST_F(PipelineDispatchIssueUnitTest, singleInstr_rsFull) {
       EXPECT_NE(rsSizes[i], refRsSizes[i]);
     }
   }
-  // Check input pipelineBuffer stalled
-  EXPECT_TRUE(input.isStalled());
+  // Side-queue absorbs the blocked uop; input is only stalled when the
+  // side queue hits its soft cap (64), so for a single blocked uop the
+  // PipelineBuffer is NOT stalled but the uop is parked in the side queue.
+  EXPECT_FALSE(input.isStalled());
+  EXPECT_FALSE(diUnit.isSideQueueEmpty());
   // Ensure one rsStall recorded in tick()
   EXPECT_EQ(diUnit.getFrontendStalls(), 0);
   EXPECT_EQ(diUnit.getBackendStalls(), 0);

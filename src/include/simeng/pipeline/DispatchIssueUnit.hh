@@ -181,7 +181,45 @@ class DispatchIssueUnit {
    * but at least one was successfully dispatched in the same tick). */
   uint64_t bandwidthLimitedCycles_ = 0;
 
+  /** Side-buffer of uops that couldn't dispatch this tick (RS cap or DR cap).
+   * Each tick we try to drain these first, then process head slots. This
+   * decouples rename throughput from per-RS stalls — the rename→dispatch
+   * PipelineBuffer can advance even if one slot is held back. Bounded by
+   * sidequeueLimit_ to avoid unbounded growth. */
+  std::deque<std::shared_ptr<Instruction>> stalledQueue_;
+  /** Soft cap on stalledQueue_ size — once hit, set input_.stall(true) to
+   * gate upstream. Tuned to ROB / 4 (typical buffer depth). */
+  size_t stalledQueueLimit_ = 64;
+
+  /** Total dispatch slots tried (non-null head slots seen) and dispatched. */
+  uint64_t dispatchSlotsTried_ = 0;
+  uint64_t dispatchSlotsDispatched_ = 0;
+  /** Tick was aborted via early-return after the first stall, with remaining
+   * non-null slots not even attempted. */
+  uint64_t dispatchEarlyReturnTicks_ = 0;
+  uint64_t dispatchSlotsSkippedByEarlyReturn_ = 0;
+
+  /** Number of uops pushed into the side queue this run. */
+  uint64_t dispatchSideQueuePushed_ = 0;
+  /** Number of uops drained from the side queue this run. */
+  uint64_t dispatchSideQueueDrained_ = 0;
+  /** Highwater of side queue depth this run. */
+  uint64_t dispatchSideQueueMaxOccupancy_ = 0;
+
  public:
+  bool isSideQueueEmpty() const { return stalledQueue_.empty(); }
+  uint64_t getDispatchSideQueuePushed() const { return dispatchSideQueuePushed_; }
+  uint64_t getDispatchSideQueueDrained() const { return dispatchSideQueueDrained_; }
+  uint64_t getDispatchSideQueueMaxOccupancy() const {
+    return dispatchSideQueueMaxOccupancy_;
+  }
+  uint64_t getDispatchSlotsTried() const { return dispatchSlotsTried_; }
+  uint64_t getDispatchSlotsDispatched() const { return dispatchSlotsDispatched_; }
+  uint64_t getDispatchEarlyReturnTicks() const { return dispatchEarlyReturnTicks_; }
+  uint64_t getDispatchSlotsSkippedByEarlyReturn() const {
+    return dispatchSlotsSkippedByEarlyReturn_;
+  }
+
   /** Retrieve per-RS counters: full-cycles, occupancy sum, block-on-stall. */
   const std::vector<uint64_t>& getPerRsFullCycles() const {
     return perRsFullCycles_;

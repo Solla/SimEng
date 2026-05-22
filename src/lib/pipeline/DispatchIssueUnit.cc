@@ -84,24 +84,32 @@ void DispatchIssueUnit::tick() {
       perRsFullCycles_[i]++;
   }
 
-  for (size_t slot = 0; slot < input_.getWidth(); slot++) {
-    auto& uop = input_.getHeadSlots()[slot];
-    if (uop == nullptr) {
-      continue;
-    }
+  // Snapshot tried-uop count for diagnostics: side queue depth at tick start
+  // plus non-null head slots.
+  size_t triedAtStart = stalledQueue_.size();
+  for (size_t s = 0; s < input_.getWidth(); s++) {
+    if (input_.getHeadSlots()[s] != nullptr) triedAtStart++;
+  }
 
+  size_t slotsDispatched_dbg = 0;
+  bool stallAccountedThisTick = false;
+
+  // tryDispatch: attempt to dispatch one uop in place. Returns true if uop
+  // was consumed (dispatched, or an exception that we forwarded to commit) and
+  // sets the referent to nullptr. Returns false on RS-cap / DR-cap block,
+  // leaving the referent unmodified and updating per-RS block counters.
+  auto tryDispatch = [&](std::shared_ptr<Instruction>& uop) -> bool {
+    if (uop == nullptr) return true;
+    // Match prior call ordering: query supportedPorts first (some test mocks
+    // and downstream telemetry expect exactly one call per dispatched uop),
+    // then check exception.
     const std::vector<uint16_t>& supportedPorts = uop->getSupportedPorts();
-
     if (uop->exceptionEncountered()) {
-      // Exception; mark as ready to commit, and remove from pipeline
       uop->setCommitReady();
-      input_.getHeadSlots()[slot] = nullptr;
-      continue;
+      uop = nullptr;
+      return true;
     }
-    // Pre-check: if every reservation station reachable via supportedPorts is
-    // already full (or hits its per-tick dispatch limit), stall without
-    // consulting the port allocator. This avoids spurious allocate/deallocate
-    // round-trips when there is no available RS slot anyway.
+    (void)supportedPorts;  // used below
     bool anyRsAvailable = false;
     for (uint16_t p : supportedPorts) {
       if (p >= portMapping_.size()) continue;
@@ -114,10 +122,10 @@ void DispatchIssueUnit::tick() {
       }
     }
     if (!anyRsAvailable) {
-      input_.stall(true);
-      rsStalls_++;
-      // Attribute: which reachable RS(s) were full for this stalling uop?
-      // Track capacity vs dispatch-rate causes separately.
+      if (!stallAccountedThisTick) {
+        rsStalls_++;
+        stallAccountedThisTick = true;
+      }
       for (uint16_t p : supportedPorts) {
         if (p >= portMapping_.size()) continue;
         uint16_t rsIdx = portMapping_[p].first;
@@ -130,10 +138,8 @@ void DispatchIssueUnit::tick() {
           if (drFull && !capFull) perRsBlockByDispatchRate_[rsIdx]++;
         }
       }
-      if (dispatchedThisTick) bandwidthLimitedCycles_++;
-      return;
+      return false;
     }
-    // Allocate issue port to uop
     uint16_t port = portAllocator_.allocate(supportedPorts);
     if (port >= portMapping_.size()) {
       std::cerr << "[SimEng:DispatchIssueUnit::tick] Allocated port " << port
@@ -143,63 +149,43 @@ void DispatchIssueUnit::tick() {
     }
     uint16_t RS_Index = portMapping_[port].first;
     uint16_t RS_Port = portMapping_[port].second;
-    assert(RS_Index < reservationStations_.size() &&
-           "Allocated port inaccessible");
     ReservationStation& rs = reservationStations_[RS_Index];
 
-    // When appropriate, stall uop or input buffer if stall buffer full
     if (rs.currentSize == rs.capacity ||
         dispatches_[RS_Index] == rs.dispatchRate) {
-      // Deallocate port given
       portAllocator_.deallocate(port);
-      input_.stall(true);
-      rsStalls_++;
-      // Attribute post-allocator stall to the chosen RS.
+      if (!stallAccountedThisTick) {
+        rsStalls_++;
+        stallAccountedThisTick = true;
+      }
       perRsBlockCount_[RS_Index]++;
       if (rs.currentSize >= rs.capacity) perRsBlockByCapacity_[RS_Index]++;
       else if (dispatches_[RS_Index] >= rs.dispatchRate)
         perRsBlockByDispatchRate_[RS_Index]++;
-      if (dispatchedThisTick) bandwidthLimitedCycles_++;
-      return;
+      return false;
     }
 
-    // Assume the uop will be ready
     bool ready = true;
-
-    // Register read
-    // Identify remaining missing registers and supply values
     auto& sourceRegisters = uop->getSourceRegisters();
     for (uint16_t i = 0; i < sourceRegisters.size(); i++) {
       const auto& reg = sourceRegisters[i];
-
       if (!uop->isOperandReady(i)) {
-        // The operand hasn't already been supplied
         if (scoreboard_[reg.type][reg.tag]) {
-          // The scoreboard says it's ready; read and supply the register value
           uop->supplyOperand(i, registerFileSet_.get(reg));
         } else {
-          // This register isn't ready yet. Register this uop to the dependency
-          // matrix for a more efficient lookup later
           dependencyMatrix_[reg.type][reg.tag].push_back({uop, port, i});
           ready = false;
         }
       }
     }
-
-    // Set scoreboard for all destination registers as not ready
     auto& destinationRegisters = uop->getDestinationRegisters();
     for (const auto& reg : destinationRegisters) {
       scoreboard_[reg.type][reg.tag] = false;
     }
-
-    // Increment dispatches made and RS occupied entries size
     dispatches_[RS_Index]++;
     rs.currentSize++;
     dispatchedThisTick = true;
-
-    // Per-RS dispatch accounting. Cross-RS flag = supportedPorts spanned more
-    // than one RS, i.e. the allocator chose a routing policy rather than
-    // having a single legal RS to place this uop into.
+    slotsDispatched_dbg++;
     perRsDispatched_[RS_Index]++;
     {
       bool sawOther = false;
@@ -209,34 +195,67 @@ void DispatchIssueUnit::tick() {
       }
       if (sawOther) perRsDispatchedCrossRS_[RS_Index]++;
     }
-    // Once-per-process trace: dump the supportedPorts of the first ~20 unique
-    // group values we see, env-gated. Lets us prove whether group-derived
-    // routing is the bug.
-    if (std::getenv("SIMENG_PORTS_TRACE") != nullptr) {
-      static std::unordered_set<uint16_t> seenGroups;
-      uint16_t g = uop->getGroup();
-      if (seenGroups.size() < 30 && seenGroups.insert(g).second) {
-        std::cerr << "[ports-trace] group=" << g
-                  << " isBranch=" << uop->isBranch()
-                  << " isLoad=" << uop->isLoad()
-                  << " isStoreAddr=" << uop->isStoreAddress()
-                  << " supportedPorts=[";
-        for (uint16_t p : supportedPorts) {
-          uint16_t rs = (p < portMapping_.size()) ? portMapping_[p].first
-                                                  : (uint16_t)0xFFFF;
-          std::cerr << " p" << p << "(rs" << rs << ")";
-        }
-        std::cerr << " ] -> chose port=" << port
-                  << " rs=" << RS_Index << "\n";
-      }
-    }
-
     if (ready) {
       rs.ports[RS_Port].ready.push_back(std::move(uop));
     }
+    uop = nullptr;
+    return true;
+  };
 
-    input_.getHeadSlots()[slot] = nullptr;
+  bool anyBlocked = false;
+
+  // Step 1: drain side queue front-to-back, in program order. Stop on the
+  // first uop that can't dispatch — preserving FIFO order is load-bearing
+  // for scoreboard correctness.
+  while (!stalledQueue_.empty()) {
+    auto& uop = stalledQueue_.front();
+    if (!tryDispatch(uop)) {
+      anyBlocked = true;
+      break;
+    }
+    stalledQueue_.pop_front();
+    dispatchSideQueueDrained_++;
   }
+
+  // Step 2: walk head slots in program order. Once blocked (either by step 1
+  // or by a slot here), push remaining non-null slots into the side queue
+  // preserving order, and null them so rename can refill next tick.
+  for (size_t slot = 0; slot < input_.getWidth(); slot++) {
+    auto& head = input_.getHeadSlots()[slot];
+    if (head == nullptr) continue;
+    if (anyBlocked) {
+      stalledQueue_.push_back(std::move(head));
+      head = nullptr;
+      dispatchSideQueuePushed_++;
+      dispatchSlotsSkippedByEarlyReturn_++;
+      continue;
+    }
+    if (!tryDispatch(head)) {
+      stalledQueue_.push_back(std::move(head));
+      head = nullptr;
+      dispatchSideQueuePushed_++;
+      dispatchSlotsSkippedByEarlyReturn_++;
+      anyBlocked = true;
+    }
+  }
+
+  // Step 3: backpressure. If the side queue is at its soft cap, stall the
+  // rename buffer so upstream stops pushing. Otherwise leave it unstalled so
+  // rename can refill the now-drained head slots.
+  if (stalledQueue_.size() >= stalledQueueLimit_) {
+    input_.stall(true);
+  }
+  if (stalledQueue_.size() > dispatchSideQueueMaxOccupancy_) {
+    dispatchSideQueueMaxOccupancy_ = stalledQueue_.size();
+  }
+
+  if (anyBlocked) {
+    if (dispatchedThisTick) bandwidthLimitedCycles_++;
+    dispatchEarlyReturnTicks_++;
+  }
+
+  dispatchSlotsTried_ += triedAtStart;
+  dispatchSlotsDispatched_ += slotsDispatched_dbg;
 }
 
 void DispatchIssueUnit::issue() {
@@ -310,6 +329,11 @@ void DispatchIssueUnit::setRegisterReady(Register reg) {
 }
 
 void DispatchIssueUnit::purgeFlushed() {
+  // Drop any flushed uops from the side-buffer.
+  for (auto it = stalledQueue_.begin(); it != stalledQueue_.end();) {
+    if ((*it)->isFlushed()) it = stalledQueue_.erase(it);
+    else ++it;
+  }
   for (size_t i = 0; i < reservationStations_.size(); i++) {
     // Search the ready queues for flushed instructions and remove them
     auto& rs = reservationStations_[i];
@@ -374,6 +398,7 @@ void DispatchIssueUnit::getRSSizes(std::vector<uint32_t>& sizes) const {
 }
 
 void DispatchIssueUnit::flush() {
+  stalledQueue_.clear();
   for (size_t i = 0; i < scoreboard_.size(); i++) {
     for (size_t j = 0; j < scoreboard_[i].size(); j++) {
       scoreboard_[i][j] = true;
