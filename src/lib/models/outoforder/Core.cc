@@ -128,6 +128,7 @@ void Core::tick() {
       // are pending, and no exception is being handled before context switching
       if (fetchToDecodeBuffer_.isEmpty() && decodeToRenameBuffer_.isEmpty() &&
           renameToDispatchBuffer_.isEmpty() &&
+          dispatchIssueUnit_.isSideQueueEmpty() &&
           !dataMemory_.hasPendingRequests() && (reorderBuffer_.size() == 0) &&
           (exceptionGenerated_ == false)) {
         // Flush pipeline
