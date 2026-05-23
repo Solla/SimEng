@@ -1181,6 +1181,49 @@ void ModelConfig::postValidation() {
           << "\n";
     }
   }
+
+  // B6 sanity guards for upstream issues #384, #399, #400. These catch
+  // configurations where ROB / phys-reg / commit-width sizing would cause
+  // indefinite rename stalls or apparent memory leaks at runtime. The
+  // numeric floors are conservative — sized to clear the largest known
+  // single-macro-op uop count (~16 for AArch64 SVE/SME multi-reg ops).
+  {
+    auto robSize = configTree_["Queue-Sizes"]["ROB"].as<uint64_t>();
+    auto commitWidth =
+        configTree_["Pipeline-Widths"]["Commit"].as<uint64_t>();
+    if (commitWidth == 0) {
+      invalid_ << "\t- Pipeline-Widths:Commit must be >= 1\n";
+    }
+    if (robSize < 16) {
+      invalid_ << "\t- Queue-Sizes:ROB (" << robSize
+               << ") must be >= 16 to fit the worst-case single-macro-op "
+                  "uop count (AArch64 SVE/SME multi-reg ops)\n";
+    }
+    if (robSize < commitWidth) {
+      invalid_ << "\t- Queue-Sizes:ROB (" << robSize
+               << ") must be >= Pipeline-Widths:Commit (" << commitWidth
+               << ")\n";
+    }
+    if (isa_ == ISA::AArch64) {
+      auto gprCount =
+          configTree_["Register-Set"]["GeneralPurpose-Count"].as<uint64_t>();
+      auto fpCount = configTree_["Register-Set"]["FloatingPoint/SVE-Count"]
+                         .as<uint64_t>();
+      // AArch64 has 32 GP + 32 SIMD/FP/SVE logical regs. Phys regs must
+      // exceed logical by a margin large enough for in-flight rename
+      // (~commitWidth + ROB headroom).
+      if (gprCount < 32 + commitWidth) {
+        invalid_ << "\t- Register-Set:GeneralPurpose-Count (" << gprCount
+                 << ") must be >= 32 + Pipeline-Widths:Commit ("
+                 << commitWidth << ") to avoid rename stalls\n";
+      }
+      if (fpCount < 32 + commitWidth) {
+        invalid_ << "\t- Register-Set:FloatingPoint/SVE-Count (" << fpCount
+                 << ") must be >= 32 + Pipeline-Widths:Commit ("
+                 << commitWidth << ") to avoid rename stalls\n";
+      }
+    }
+  }
 }
 
 ryml::Tree ModelConfig::getConfig() { return configTree_; }
