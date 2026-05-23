@@ -736,6 +736,23 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
     case Opcode::AArch64_LD1i64:
       operands[1].access = CS_AC_READ;
       break;
+    case Opcode::AArch64_LD1i64_POST:
+      // vt is read-modify-write (single-lane insert), xn is base reg
+      // that gets post-incremented.
+      operands[0].access = CS_AC_READ | CS_AC_WRITE;
+      operands[1].access = CS_AC_READ | CS_AC_WRITE;
+      // Newer Capstone reports operandCount=2 for the #imm form
+      // ({vt.d}[index], mem-with-disp) and omits the trailing imm that
+      // Instruction_execute.cc reads as operands[2].imm. Re-populate
+      // operands[2] with the architecturally-fixed 8-byte post-index.
+      // Mirrors the LD1Rv*_POST fixups. xm-form not exercised.
+      if (operandCount < 3) {
+        operandCount = 3;
+        operands[2].type = AARCH64_OP_IMM;
+        operands[2].access = CS_AC_READ;
+        operands[2].imm = 8;
+      }
+      break;
     case Opcode::AArch64_GLD1W_D_SCALED_REAL: {
       // Access types are not set correctly
       operands[0].access = CS_AC_WRITE;
@@ -947,11 +964,24 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
       operands[1].access = CS_AC_READ | CS_AC_WRITE;
       break;
     case Opcode::AArch64_LD1Twov16b:
-      [[fallthrough]];
-    case Opcode::AArch64_LD1Twov16b_POST:
-      // Fix incorrect access types
       operands[0].access = CS_AC_WRITE;
       operands[1].access = CS_AC_WRITE;
+      break;
+    case Opcode::AArch64_LD1Twov16b_POST:
+      operands[0].access = CS_AC_WRITE;
+      operands[1].access = CS_AC_WRITE;
+      // Newer Capstone reports operandCount=3 for the #imm form
+      // (vt1, vt2, mem-with-disp) and omits the trailing imm operand
+      // that Instruction_execute.cc reads as operands[3].imm. Re-populate
+      // operands[3] with the architecturally-fixed post-index value (32
+      // bytes = two 16-byte vectors). Mirrors the LD1Rv*_POST fixups
+      // above. xm-form is not exercised in practice.
+      if (operandCount < 4) {
+        operandCount = 4;
+        operands[3].type = AARCH64_OP_IMM;
+        operands[3].access = CS_AC_READ;
+        operands[3].imm = 32;
+      }
       break;
     case Opcode::AArch64_LDCLRALW:
       [[fallthrough]];

@@ -2683,7 +2683,11 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_LD1Onev16b_POST: {  // ld1 {vt.16b}, [xn], #imm
         results[0] = memoryData[0].zeroExtend(memoryData[0].size(), 256);
-        results[1] = operands[0].get<uint64_t>() + metadata.operands[2].imm;
+        // Newer Capstone reports operandCount=2 and folds the post-increment
+        // imm into operands[1].mem.disp instead of operands[2].imm. Read from
+        // the mem operand's disp so xn correctly advances by #imm.
+        results[1] = operands[0].get<uint64_t>() +
+                     static_cast<int64_t>(metadata.operands[1].mem.disp);
         break;
       }
       case Opcode::AArch64_LD1RD_IMM: {  // ld1rd {zt.d}, pg/z, [xn, #imm]
