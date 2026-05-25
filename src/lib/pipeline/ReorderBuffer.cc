@@ -1,6 +1,11 @@
 #include "simeng/pipeline/ReorderBuffer.hh"
 
 #include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <map>
+#include <utility>
+#include <vector>
 #include <cassert>
 #include <iostream>
 
@@ -20,7 +25,12 @@ ReorderBuffer::ReorderBuffer(
       predictor_(predictor),
       sendLoopBoundary_(sendLoopBoundary),
       loopBufSize_(loopBufSize),
-      loopDetectionThreshold_(loopDetectionThreshold) {}
+      loopDetectionThreshold_(loopDetectionThreshold) {
+  branchProfileEnabled_ = (std::getenv("SIMENG_BRANCH_PROFILE") != nullptr);
+  holProfileEnabled_ = (std::getenv("SIMENG_ROB_HOL_PROFILE") != nullptr);
+}
+
+constexpr const char* ReorderBuffer::holClassName_[6];
 
 void ReorderBuffer::reserve(const std::shared_ptr<Instruction>& insn) {
   assert(buffer_.size() < maxSize_ &&
@@ -79,10 +89,67 @@ unsigned int ReorderBuffer::commit(uint64_t maxCommitSize) {
   for (n = 0; n < maxCommits; n++) {
     auto& uop = buffer_.front();
     if (!uop->canCommit()) {
+      // Probe 5: classify why ROB head can't commit this cycle.
+      if (holProfileEnabled_) {
+        int klass;
+        if (!uop->hasExecuted()) {
+          if (!uop->canExecute()) {
+            klass = 0;  // dep_wait
+          } else if (uop->isBranch()) {
+            klass = 1;  // branch_unresolved
+          } else if (uop->isLoad() || uop->isStoreAddress()) {
+            klass = 2;  // LSQ_pending
+          } else {
+            klass = 3;  // exec_in_flight
+          }
+        } else if (uop->isWaitingCommit()) {
+          // Writeback ran; uop is a micro-op holding the head until siblings
+          // of the same macro-op finish.
+          klass = 4;  // microop_sibling
+        } else {
+          // EU has executed_=true but WritebackUnit::tick has not yet
+          // processed this completion slot. Inherent 1-cycle pipeline lag.
+          klass = 5;  // wb_lag
+        }
+        // Charge a full cycle's worth of HOL stall to this class only once
+        // (the outer caller invokes commit() once per cycle). Count only on
+        // the first break-iteration of this call.
+        if (n == 0) holCycleByClass_[klass]++;
+        // Exact PC for microop_sibling (klass 4) and wb_lag (klass 5);
+        // 64B-bucket for the others to keep map sizes bounded.
+        uint64_t pcKey = (klass >= 4) ? uop->getInstructionAddress()
+                                      : (uop->getInstructionAddress() & ~0x3FULL);
+        holPcByClass_[klass][pcKey]++;
+      }
       break;
     }
 
-    if (uop->isLastMicroOp()) instructionsCommitted_++;
+    if (uop->isLastMicroOp()) {
+      instructionsCommitted_++;
+      uint64_t pc = uop->getInstructionAddress();
+      lastCommittedPC_ = pc;
+      if (pc < 0x4004e0) pcBucket_[0]++;          // pre-main
+      else if (pc < 0x401000) pcBucket_[1]++;     // main/dhry funcs
+      else if (pc < 0x500000) pcBucket_[2]++;     // libc / etc
+      else pcBucket_[3]++;                         // dynamic/heap/other
+      // Optional sample of distinct PCs (env-gated) to spot infinite loops.
+      if (std::getenv("SIMENG_PC_SAMPLE") != nullptr) {
+        static std::map<uint64_t, uint64_t> hist;
+        hist[pc & ~0x3FULL]++;
+        static uint64_t last_dump = 0;
+        if (instructionsCommitted_ - last_dump >= 10000000) {
+          last_dump = instructionsCommitted_;
+          std::cerr << "[pc-sample] top buckets at retired=" << instructionsCommitted_ << ":\n";
+          std::vector<std::pair<uint64_t,uint64_t>> sorted(hist.begin(), hist.end());
+          std::sort(sorted.begin(), sorted.end(),
+                    [](const auto& a, const auto& b){ return a.second > b.second; });
+          for (int i = 0; i < 5 && i < (int)sorted.size(); i++) {
+            std::cerr << "  0x" << std::hex << sorted[i].first << std::dec
+                      << " : " << sorted[i].second << "\n";
+          }
+        }
+      }
+    }
 
     if (uop->exceptionEncountered()) {
       raiseException_(uop);
@@ -119,10 +186,18 @@ unsigned int ReorderBuffer::commit(uint64_t maxCommitSize) {
       predictor_.update(uop->getInstructionAddress(), uop->wasBranchTaken(),
                         uop->getBranchAddress(), uop->getBranchType(),
                         uop->getInstructionId());
+      retiredBranches_++;
       const auto& pred = uop->getBranchPrediction();
-      if (pred.isTaken != uop->wasBranchTaken() ||
-          pred.target != uop->getBranchAddress()) {
+      bool mispred = (pred.isTaken != uop->wasBranchTaken() ||
+                      pred.target != uop->getBranchAddress());
+      if (mispred) {
         branchMispredicts_++;
+      }
+      // Probe 1: per-PC branch resolution counters (total + misses).
+      if (branchProfileEnabled_) {
+        auto& e = branchMissByPc_[uop->getInstructionAddress()];
+        e.first++;
+        if (mispred) e.second++;
       }
     }
 
@@ -232,6 +307,10 @@ uint64_t ReorderBuffer::getViolatingLoadsCount() const {
 
 uint64_t ReorderBuffer::getBranchMispredictedCount() const {
   return branchMispredicts_;
+}
+
+uint64_t ReorderBuffer::getRetiredBranchesCount() const {
+  return retiredBranches_;
 }
 
 }  // namespace pipeline

@@ -450,9 +450,9 @@ uint64_t Core::getInstructionsRetiredCount() const {
 
 std::map<std::string, std::string> Core::getStats() const {
   auto retired = reorderBuffer_.getInstructionsCommittedCount();
-  auto ipc = retired / static_cast<float>(ticks_);
+  auto ipc = retired / static_cast<double>(ticks_);
   std::ostringstream ipcStr;
-  ipcStr << std::setprecision(2) << ipc;
+  ipcStr << std::fixed << std::setprecision(4) << ipc;
 
   auto branchStalls = fetchUnit_.getBranchStalls();
 
@@ -476,8 +476,26 @@ std::map<std::string, std::string> Core::getStats() const {
     totalBranchesExecuted += eu.getBranchExecutedCount();
     totalBranchMispredicts += eu.getBranchMispredictedCount();
   }
-  auto branchMissRate = 100.0f * static_cast<float>(totalBranchMispredicts) /
-                        static_cast<float>(totalBranchesExecuted);
+  // Speculative-path mispredict rate (every wrong-path branch that reaches
+  // execute, including ones later squashed). Useful as a diagnostic but not
+  // comparable to silicon's BR_MIS_PRED_RETIRED counter.
+  auto branchMissRateSpec =
+      100.0f * static_cast<float>(totalBranchMispredicts) /
+      static_cast<float>(totalBranchesExecuted);
+  std::ostringstream branchMissRateSpecStr;
+  branchMissRateSpecStr << std::setprecision(3) << branchMissRateSpec << "%";
+
+  // Retired (commit-time) mispredict rate — gates on actually-committed
+  // branches, matches silicon's retire-time PMU semantics. This is the
+  // honest predictor-quality number. Under deep-pipeline / high-stall
+  // configs (e.g. SST cache hierarchy) the spec rate inflates massively
+  // from wrong-path squashes; the retired rate stays representative.
+  auto retiredMispredicts = reorderBuffer_.getBranchMispredictedCount();
+  auto retiredBranches = reorderBuffer_.getRetiredBranchesCount();
+  float branchMissRate = retiredBranches > 0
+      ? 100.0f * static_cast<float>(retiredMispredicts) /
+            static_cast<float>(retiredBranches)
+      : 0.0f;
   std::ostringstream branchMissRateStr;
   branchMissRateStr << std::setprecision(3) << branchMissRate << "%";
 
@@ -499,6 +517,9 @@ std::map<std::string, std::string> Core::getStats() const {
           {"branch.executed", std::to_string(totalBranchesExecuted)},
           {"branch.mispredict", std::to_string(totalBranchMispredicts)},
           {"branch.missrate", branchMissRateStr.str()},
+          {"branch.retired", std::to_string(retiredBranches)},
+          {"branch.retiredMispredict", std::to_string(retiredMispredicts)},
+          {"branch.specMissrate", branchMissRateSpecStr.str()},
           {"lsq.loadViolations",
            std::to_string(reorderBuffer_.getViolatingLoadsCount())},
           {"idle.ticks", std::to_string(idle_ticks_)},
@@ -545,6 +566,83 @@ std::map<std::string, std::string> Core::getStats() const {
     }
     stats["rsprof.bandwidthLimitedCycles"] =
         std::to_string(dispatchIssueUnit_.getBandwidthLimitedCycles());
+    stats["dispprof.slotsTried"] =
+        std::to_string(dispatchIssueUnit_.getDispatchSlotsTried());
+    stats["dispprof.slotsDispatched"] =
+        std::to_string(dispatchIssueUnit_.getDispatchSlotsDispatched());
+    stats["dispprof.earlyReturnTicks"] =
+        std::to_string(dispatchIssueUnit_.getDispatchEarlyReturnTicks());
+    stats["dispprof.slotsSkippedByEarlyReturn"] =
+        std::to_string(dispatchIssueUnit_.getDispatchSlotsSkippedByEarlyReturn());
+    {
+      std::ostringstream oss;
+      oss << std::hex << "0x" << reorderBuffer_.lastCommittedPC_;
+      stats["pcprof.lastPC"] = oss.str();
+    }
+    stats["pcprof.bucket0_premain"] = std::to_string(reorderBuffer_.pcBucket_[0]);
+    stats["pcprof.bucket1_main"] = std::to_string(reorderBuffer_.pcBucket_[1]);
+    stats["pcprof.bucket2_libc"] = std::to_string(reorderBuffer_.pcBucket_[2]);
+    stats["pcprof.bucket3_other"] = std::to_string(reorderBuffer_.pcBucket_[3]);
+  }
+
+  // Optional per-PC branch-miss bucket (Probe 1).
+  if (std::getenv("SIMENG_BRANCH_PROFILE") != nullptr) {
+    const auto& m = reorderBuffer_.branchMissByPc_;
+    std::vector<std::pair<uint64_t, std::pair<uint64_t,uint64_t>>> v(
+        m.begin(), m.end());
+    // Sort by absolute miss count desc.
+    std::sort(v.begin(), v.end(), [](const auto& a, const auto& b){
+      return a.second.second > b.second.second;
+    });
+    uint64_t totalRes = 0, totalMiss = 0;
+    for (const auto& kv : m) {
+      totalRes += kv.second.first;
+      totalMiss += kv.second.second;
+    }
+    stats["branchprof.totalResolutions"] = std::to_string(totalRes);
+    stats["branchprof.totalMisses"] = std::to_string(totalMiss);
+    stats["branchprof.distinctPcs"] = std::to_string(v.size());
+    int top = std::min<int>(20, v.size());
+    for (int i = 0; i < top; i++) {
+      std::ostringstream pcs;
+      pcs << "branchprof.pc." << std::hex << v[i].first;
+      double rate = v[i].second.first
+                        ? (100.0 * v[i].second.second / v[i].second.first)
+                        : 0.0;
+      std::ostringstream rs;
+      rs << std::fixed << std::setprecision(2) << rate;
+      stats[pcs.str() + ".total"] = std::to_string(v[i].second.first);
+      stats[pcs.str() + ".miss"] = std::to_string(v[i].second.second);
+      stats[pcs.str() + ".rate"] = rs.str();
+    }
+  }
+
+  // Optional ROB head-of-line stall attribution (Probe 5).
+  if (std::getenv("SIMENG_ROB_HOL_PROFILE") != nullptr) {
+    uint64_t totalHol = 0;
+    for (int k = 0; k < 6; k++) totalHol += reorderBuffer_.holCycleByClass_[k];
+    stats["holprof.totalStallCycles"] = std::to_string(totalHol);
+    for (int k = 0; k < 6; k++) {
+      std::string base = std::string("holprof.") +
+                         pipeline::ReorderBuffer::holClassName_[k];
+      uint64_t cyc = reorderBuffer_.holCycleByClass_[k];
+      stats[base + ".cycles"] = std::to_string(cyc);
+      double pct = totalHol ? (100.0 * cyc / totalHol) : 0.0;
+      std::ostringstream ps;
+      ps << std::fixed << std::setprecision(2) << pct;
+      stats[base + ".pct"] = ps.str();
+      // Top 10 PCs per class.
+      const auto& pm = reorderBuffer_.holPcByClass_[k];
+      std::vector<std::pair<uint64_t,uint64_t>> v(pm.begin(), pm.end());
+      std::sort(v.begin(), v.end(),
+                [](const auto& a, const auto& b){ return a.second > b.second; });
+      int top = std::min<int>(10, v.size());
+      for (int i = 0; i < top; i++) {
+        std::ostringstream pcs;
+        pcs << base << ".pc." << std::hex << v[i].first;
+        stats[pcs.str()] = std::to_string(v[i].second);
+      }
+    }
   }
 
   // Optional per-RS dispatch profiling (no behavioural effect).
