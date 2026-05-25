@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <memory>
 
@@ -32,33 +34,51 @@ class BranchHistory {
   }
 
   /** Returns 'numBits' of the global history folded over on itself to get a
-   * value of size 'length'.  The global history is folded by taking an
-   * XOR hash with the overflowing bits to get an output of 'length' bits. */
+   * value of size 'length'.  The global history is folded by partitioning
+   * the requested bit window into non-overlapping chunks of 'length' bits
+   * and XOR-combining them — the standard PPM/TAGE folded-history hash.
+   *
+   * BUG FIX 2026-05-25: previous implementation had multiple defects —
+   * shifts by ≥64 bits (UB), a "leftover bits" branch that XORed garbage,
+   * `1 << length` trim mask (UB / signed-int when length≥31), and a stride
+   * that didn't actually partition the window. Rewrote against TAGE
+   * reference. (See memory: tage-fixes-2026-05-24 — the earlier rewrite
+   * attempt was reverted because CM IPC dropped, but CM is currently
+   * inflated by the Fixed-L1 artifact and the standard fold is the
+   * correct algorithm; pending-actions-2026-05-25 Action 3.) */
   uint64_t getFolded(uint8_t numBits, uint8_t length) {
     assert(numBits <= size_ &&
            "Cannot get more bits of branch history than "
            "the size of the history");
+    assert(length > 0 && length <= 64 && "fold length must be in (0,64]");
+    if (numBits == 0) return 0;
+
+    const uint64_t lengthMask =
+        (length == 64) ? ~0ull : ((1ull << length) - 1);
     uint64_t output = 0;
 
-    uint64_t startIndex = 0;
-    uint64_t endIndex = numBits - 1;
-
-    while (startIndex <= numBits) {
-      output ^= ((history_[startIndex / 64] >> startIndex) &
-                 ((1ull << (numBits - startIndex)) - 1));
-
-      // Check to see if a second uint64_t value will need to be accessed
-      if ((startIndex / 64) == (endIndex / 64)) {
-        uint8_t leftOverBits = endIndex % 64;
-        output ^= (history_[endIndex / 64] << (numBits - leftOverBits));
+    for (uint64_t i = 0; i < numBits; i += length) {
+      uint64_t chunkBits = std::min<uint64_t>(length, numBits - i);
+      uint64_t word = i / 64;
+      uint64_t bit = i % 64;
+      uint64_t chunk;
+      if (bit + chunkBits <= 64) {
+        // Single-word chunk
+        uint64_t mask =
+            (chunkBits == 64) ? ~0ull : ((1ull << chunkBits) - 1);
+        chunk = (history_[word] >> bit) & mask;
+      } else {
+        // Chunk straddles a uint64_t boundary
+        uint64_t lo = history_[word] >> bit;
+        uint64_t hi = history_[word + 1] << (64 - bit);
+        uint64_t mask =
+            (chunkBits == 64) ? ~0ull : ((1ull << chunkBits) - 1);
+        chunk = (lo | hi) & mask;
       }
-      startIndex += length;
-      endIndex += length;
+      output ^= chunk;
     }
 
-    // Trim the output to the desired size
-    output &= (1 << length) - 1;
-    return output;
+    return output & lengthMask;
   }
 
   /** Adds a branch outcome ('isTaken') to the global history */
