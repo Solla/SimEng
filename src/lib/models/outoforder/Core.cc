@@ -525,6 +525,11 @@ std::map<std::string, std::string> Core::getStats() const {
           {"idle.ticks", std::to_string(idle_ticks_)},
           {"context.switches", std::to_string(contextSwitches_)}};
 
+  // Predictor diagnostics (env-gated; default empty map).
+  for (const auto& kv : branchPredictor_.getDiagnostics()) {
+    stats[kv.first] = std::to_string(kv.second);
+  }
+
   // Optional fetch/branch-stall diagnostics (no behavioural effect).
   if (std::getenv("SIMENG_FETCH_PROFILE") != nullptr) {
     for (const auto& kv : fetchUnit_.getFetchProfile())

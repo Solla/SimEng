@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+#include <map>
+#include <string>
 #include <tuple>
 
 #include "simeng/Instruction.hh"
@@ -37,6 +39,9 @@ class BranchPredictor {
    * once, the exact order that the individual instructions within this block
    * are flushed does not matter so long as they are all flushed). */
   virtual void flush(uint64_t address) = 0;
+
+  /** Optional diagnostics for env-gated profiling. Default: no diagnostics. */
+  virtual std::map<std::string, uint64_t> getDiagnostics() const { return {}; }
 
   /**
    * Overloaded function for flushing branch instructions from a

@@ -159,6 +159,44 @@ class TAGEPredictor : public BranchPredictor {
    * size are bits. */
   uint8_t tagLength_;
 
+  /** Diagnostic counters (env-gated via SIMENG_TAGE_PROFILE). Track the
+   * addHistory / rollBack / update balance to detect global-history
+   * imbalance under high flush rate. */
+  bool tageProfileEnabled_ = false;
+  uint64_t predictCount_ = 0;
+  uint64_t addHistoryCount_ = 0;
+  uint64_t flushCount_ = 0;
+  uint64_t rollBackCount_ = 0;
+  uint64_t updateCount_ = 0;
+  uint64_t updateHistoryFlipCount_ = 0;
+
+ public:
+  /** Diagnostic accessors for SIMENG_TAGE_PROFILE bench. */
+  uint64_t getPredictCount() const { return predictCount_; }
+  uint64_t getAddHistoryCount() const { return addHistoryCount_; }
+  uint64_t getFlushCount() const { return flushCount_; }
+  uint64_t getRollBackCount() const { return rollBackCount_; }
+  uint64_t getUpdateCount() const { return updateCount_; }
+  uint64_t getUpdateHistoryFlipCount() const { return updateHistoryFlipCount_; }
+  uint64_t getFtqSize() const { return ftq_.size(); }
+
+  std::map<std::string, uint64_t> getDiagnostics() const override {
+    if (!tageProfileEnabled_) return {};
+    return {
+        {"tage.predict", predictCount_},
+        {"tage.addHistory", addHistoryCount_},
+        {"tage.flush", flushCount_},
+        {"tage.rollBack", rollBackCount_},
+        {"tage.update", updateCount_},
+        {"tage.updateHistoryFlip", updateHistoryFlipCount_},
+        {"tage.ftqResidual", static_cast<uint64_t>(ftq_.size())},
+        // Expected: ftq.size() == addHistory - rollBack - update.
+        // Any divergence indicates a leak in the predict/flush/commit
+        // accounting that corrupts global history state.
+    };
+  }
+
+ private:
   // This variable is used only in debug mode -- therefore hide behind ifdef
 #ifndef NDEBUG
   /** The Id of the last instruction that update was called on -- used to

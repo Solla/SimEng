@@ -1,5 +1,7 @@
 #include "simeng/branchpredictors/TAGEPredictor.hh"
 
+#include <cstdlib>
+
 namespace simeng {
 
 TAGEPredictor::TAGEPredictor(ryml::ConstNodeRef config)
@@ -37,6 +39,7 @@ TAGEPredictor::TAGEPredictor(ryml::ConstNodeRef config)
     }
     TAGETables_.push_back(newTable);
   }
+  tageProfileEnabled_ = (std::getenv("SIMENG_TAGE_PROFILE") != nullptr);
 }
 
 TAGEPredictor::~TAGEPredictor() {
@@ -94,6 +97,10 @@ BranchPrediction TAGEPredictor::predict(uint64_t address, BranchType type,
 
   // Speculatively update the global history
   globalHistory_.addHistory(prediction.isTaken);
+  if (tageProfileEnabled_) {
+    predictCount_++;
+    addHistoryCount_++;
+  }
   return prediction;
 }
 
@@ -112,10 +119,16 @@ void TAGEPredictor::update(uint64_t address, bool isTaken,
 
   // Update global history if prediction was incorrect
   if (ftq_.front().prediction.isTaken != isTaken) {
-    // We know how many predictions there have since been by the size of the FTQ
-    globalHistory_.updateHistory(isTaken, ftq_.size());
+    // BUG FIX 2026-05-24: position is 0-indexed and the OLDEST prediction
+    // (this front entry) sits at history index ftq.size()-1, not ftq.size().
+    // The off-by-one caused every misprediction to flip the wrong history
+    // bit, systematically corrupting global history — main reason TAGE was
+    // 99.99% wrong on Dhrystone branches.
+    globalHistory_.updateHistory(isTaken, ftq_.size() - 1);
+    if (tageProfileEnabled_) updateHistoryFlipCount_++;
   }
 
+  if (tageProfileEnabled_) updateCount_++;
   // Pop used ftq entry from ftq
   ftq_.pop_front();
 }
@@ -149,6 +162,10 @@ void TAGEPredictor::flush(uint64_t address) {
 
   // Roll back global history
   globalHistory_.rollBack();
+  if (tageProfileEnabled_) {
+    flushCount_++;
+    rollBackCount_++;
+  }
 }
 
 void TAGEPredictor::getTaggedPrediction(uint64_t address,
@@ -207,8 +224,10 @@ uint64_t TAGEPredictor::getTaggedIndex(uint64_t address, uint8_t table) {
 uint64_t TAGEPredictor::getTag(uint64_t address, uint8_t table) {
   // Hash function here is pretty arbitrary
   uint64_t h1 = address;
-  uint64_t h2 =
-      globalHistory_.getFolded((1ull << table), ((1ull << tagLength_) - 1));
+  // BUG FIX 2026-05-24: getFolded(numBits, length) — length is the output
+  // bit width, not a mask. Previously passed ((1<<tagLength_)-1)=255 which
+  // is UB in getFolded's `(1 << length) - 1` trim. Should be tagLength_.
+  uint64_t h2 = globalHistory_.getFolded((1ull << table), tagLength_);
   return (h1 ^ h2) & ((1ull << tagLength_) - 1);
 }
 
