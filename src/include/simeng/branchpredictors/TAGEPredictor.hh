@@ -129,6 +129,16 @@ class TAGEPredictor : public BranchPredictor {
   /** Data structure to store the tagged tables in. */
   std::vector<std::vector<TAGEEntry>> TAGETables_;
 
+  /** Per-table global-history length in bits. Computed at construction as a
+   * geometric series L(i) = round(L0 * α^i), clamped to Global-History-Length.
+   * This is the Seznec L-TAGE structure — each tagged table uses a strictly
+   * different (and longer) slice of global history, so upper tables can
+   * capture longer-range correlations than lower tables. The previous
+   * implementation used 1<<(table+1) for the index fold-range and 1<<table
+   * for the tag fold-range, which produced asymmetric and degenerate hashes
+   * at higher table indices. */
+  std::vector<uint16_t> histLen_;
+
   /** Fetch Target Queue containing the direction prediction and previous global
    * history state of branches that are currently unresolved */
   std::deque<ftqEntry> ftq_;

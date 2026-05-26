@@ -1,5 +1,7 @@
 #include "simeng/branchpredictors/TAGEPredictor.hh"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 
 namespace simeng {
@@ -15,8 +17,23 @@ TAGEPredictor::TAGEPredictor(ryml::ConstNodeRef config)
       globalHistoryLength_(
           config["Branch-Predictor"]["Global-History-Length"].as<uint16_t>()),
       rasSize_(config["Branch-Predictor"]["RAS-entries"].as<uint16_t>()),
-      globalHistory_(1 << (numTAGETables_ + 1)),
+      globalHistory_(globalHistoryLength_),
       tagLength_(config["Branch-Predictor"]["Tag-Length"].as<uint8_t>()) {
+  // Geometric per-table history lengths: L(i) = round(L0 * α^i), clamped to
+  // globalHistoryLength_. With L0=2, α≈1.6 the series for 6 tables is
+  // {2,3,5,8,13,19} — fits 19-bit GHR exactly. Lower tables use short
+  // history (high alloc/eviction rate, captures recent), upper tables use
+  // long history (sparse but specific). Seznec L-TAGE structure.
+  histLen_.reserve(numTAGETables_);
+  const double L0 = 2.0;
+  const double alpha = 2.0;
+  for (uint32_t i = 0; i < numTAGETables_; i++) {
+    double L = L0 * std::pow(alpha, static_cast<double>(i));
+    uint16_t Li =
+        static_cast<uint16_t>(std::min<double>(std::round(L), globalHistoryLength_));
+    if (Li < 1) Li = 1;
+    histLen_.push_back(Li);
+  }
   // Calculate the saturation counter boundary between weakly taken and
   // not-taken. `(2 ^ num_sat_cnt_bits) / 2` gives the weakly taken state
   // value
@@ -213,21 +230,24 @@ BranchPrediction TAGEPredictor::getBtbPrediction(uint64_t address) {
 }
 
 uint64_t TAGEPredictor::getTaggedIndex(uint64_t address, uint8_t table) {
-  // Get the XOR of the address (sans two least-significant bits) and the
-  // global history (folded onto itself to make it of the correct size).
+  // Fold the table's slice of global history (histLen_[table] bits) into
+  // TAGETableBits_ bits, XOR with PC[2..]. Index hash uses PC>>2 so its
+  // address contribution differs from getTag (which uses PC>>btbBits_),
+  // making the two hashes independent functions of the same input bits
+  // and preventing tag-aliasing of mispredictions.
   uint64_t h1 = (address >> 2);
-  uint64_t h2 = globalHistory_.getFolded(1ull << (table + 1), TAGETableBits_);
-  // Then truncate the XOR to make it fit the desired size of an index
-  return (h1 ^ h2) & ((1 << TAGETableBits_) - 1);
+  uint64_t h2 = globalHistory_.getFolded(histLen_[table], TAGETableBits_);
+  return (h1 ^ h2) & ((1ull << TAGETableBits_) - 1);
 }
 
 uint64_t TAGEPredictor::getTag(uint64_t address, uint8_t table) {
-  // Hash function here is pretty arbitrary
-  uint64_t h1 = address;
-  // BUG FIX 2026-05-24: getFolded(numBits, length) — length is the output
-  // bit width, not a mask. Previously passed ((1<<tagLength_)-1)=255 which
-  // is UB in getFolded's `(1 << length) - 1` trim. Should be tagLength_.
-  uint64_t h2 = globalHistory_.getFolded((1ull << table), tagLength_);
+  // Fold the SAME history slice as the index, into tagLength_ bits, XOR
+  // with a different PC slice (PC >> btbBits_) so the tag is statistically
+  // independent of the index for the same branch. Symmetry with
+  // getTaggedIndex (both use histLen_[table]) is required for TAGE
+  // monotonicity — longer-history tables must see longer history.
+  uint64_t h1 = (address >> btbBits_);
+  uint64_t h2 = globalHistory_.getFolded(histLen_[table], tagLength_);
   return (h1 ^ h2) & ((1ull << tagLength_) - 1);
 }
 
