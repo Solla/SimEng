@@ -46,11 +46,8 @@ Branch-Predictor:
   # 1.08->1.22 (+13%) — silicon-correlation goal sacrificed temporarily
   # in favor of a working predictor. Switch back to TAGE once the hash is
   # rewritten. See memory: tage-structural-hash-2026-05-26.
-  Type: "TAGE"
+  Type: "Perceptron"
   BTB-Tag-Bits: 11
-  TAGE-Table-Bits: 12
-  Num-TAGE-Tables: 6
-  Tag-Length: 8
   Saturating-Count-Bits: 2
   Global-History-Length: 19
   RAS-entries: 8
