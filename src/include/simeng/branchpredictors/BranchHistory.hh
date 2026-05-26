@@ -16,8 +16,12 @@ namespace simeng {
 
 class BranchHistory {
  public:
-  BranchHistory(uint64_t size) : size_(size) {
-    history_ = std::make_unique<uint64_t[]>(size_);
+  /** Construct a branch history holding `sizeBits` bits. */
+  BranchHistory(uint64_t sizeBits) : sizeBits_(sizeBits) {
+    // Need ceil(sizeBits/64) words for storage, plus one extra so that
+    // addHistory/rollBack can shift a carry bit into index sizeBits_/64
+    // without overrunning the buffer.
+    history_ = std::make_unique<uint64_t[]>(sizeBits_ / 64 + 1);
   }
 
   ~BranchHistory() {};
@@ -27,7 +31,7 @@ class BranchHistory {
    * integer. */
   uint64_t getHistory(uint8_t numBits) {
     assert(numBits <= 64 && "Cannot get more than 64 bits without rolling");
-    assert(numBits <= size_ &&
+    assert(numBits <= sizeBits_ &&
            "Cannot get more bits of branch history than "
            "the size of the history");
     return (history_[0] & ((1ull << numBits) - 1));
@@ -36,18 +40,9 @@ class BranchHistory {
   /** Returns 'numBits' of the global history folded over on itself to get a
    * value of size 'length'.  The global history is folded by partitioning
    * the requested bit window into non-overlapping chunks of 'length' bits
-   * and XOR-combining them — the standard PPM/TAGE folded-history hash.
-   *
-   * BUG FIX 2026-05-25: previous implementation had multiple defects —
-   * shifts by ≥64 bits (UB), a "leftover bits" branch that XORed garbage,
-   * `1 << length` trim mask (UB / signed-int when length≥31), and a stride
-   * that didn't actually partition the window. Rewrote against TAGE
-   * reference. (See memory: tage-fixes-2026-05-24 — the earlier rewrite
-   * attempt was reverted because CM IPC dropped, but CM is currently
-   * inflated by the Fixed-L1 artifact and the standard fold is the
-   * correct algorithm; pending-actions-2026-05-25 Action 3.) */
+   * and XOR-combining them — the standard PPM/TAGE folded-history hash. */
   uint64_t getFolded(uint8_t numBits, uint8_t length) {
-    assert(numBits <= size_ &&
+    assert(numBits <= sizeBits_ &&
            "Cannot get more bits of branch history than "
            "the size of the history");
     assert(length > 0 && length <= 64 && "fold length must be in (0,64]");
@@ -63,12 +58,10 @@ class BranchHistory {
       uint64_t bit = i % 64;
       uint64_t chunk;
       if (bit + chunkBits <= 64) {
-        // Single-word chunk
         uint64_t mask =
             (chunkBits == 64) ? ~0ull : ((1ull << chunkBits) - 1);
         chunk = (history_[word] >> bit) & mask;
       } else {
-        // Chunk straddles a uint64_t boundary
         uint64_t lo = history_[word] >> bit;
         uint64_t hi = history_[word + 1] << (64 - bit);
         uint64_t mask =
@@ -83,14 +76,11 @@ class BranchHistory {
 
   /** Adds a branch outcome ('isTaken') to the global history */
   void addHistory(bool isTaken) {
-    for (int8_t i = size_ / 64; i >= 0; i--) {
+    for (int8_t i = sizeBits_ / 64; i >= 0; i--) {
       history_[i] <<= 1;
       if (i == 0) {
         history_[i] |= ((isTaken) ? 1 : 0);
       } else {
-        // BUG FIX 2026-05-26: mask was 0x80000000 (bit 31) — would never
-        // carry to bit 63 since (1<<31) >> 63 == 0. Effective GHR capped at
-        // 64 bits regardless of size_. Use bit 63 of lower word.
         history_[i] |= (history_[i - 1] & 0x8000000000000000ull) >> 63;
       }
     }
@@ -102,7 +92,7 @@ class BranchHistory {
    * outcome, 'position' would be 0.
    * */
   void updateHistory(bool isTaken, uint64_t position) {
-    if (position < size_) {
+    if (position < sizeBits_) {
       uint8_t vectIndex = position / 64;
       uint8_t bitIndex = position % 64;
       bool currentlyTaken = ((history_[vectIndex] & (1ull << bitIndex)) != 0);
@@ -114,17 +104,20 @@ class BranchHistory {
 
   /** Removes the most recently added branch from the history */
   void rollBack() {
-    for (uint8_t i = 0; i <= (size_ / 64); i++) {
+    for (uint8_t i = 0; i <= (sizeBits_ / 64); i++) {
       history_[i] >>= 1;
-      if (i < (size_ / 64)) {
+      if (i < (sizeBits_ / 64)) {
         history_[i] |= (history_[i + 1] & 1ull) << 63;
       }
     }
   }
 
  private:
-  /** The number of bits of branch history stored in this branch history */
-  uint64_t size_;
+  /** The number of bits of branch history stored in this branch history.
+   * Renamed from `size_` (2026-05-27) to make it explicit that this counts
+   * bits, not uint64_t storage elements. The backing array holds
+   * `sizeBits_/64 + 1` words. */
+  uint64_t sizeBits_;
 
   /** An array containing the bits of the branch history.  The bits are
    * arranged such that the most recent branches are stored in uint64_t at
