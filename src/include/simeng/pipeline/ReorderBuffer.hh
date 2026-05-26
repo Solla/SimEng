@@ -2,6 +2,7 @@
 
 #include <deque>
 #include <functional>
+#include <unordered_map>
 
 #include "simeng/Instruction.hh"
 #include "simeng/branchpredictors/BranchPredictor.hh"
@@ -144,6 +145,28 @@ class ReorderBuffer {
 
   /** The number of instructions committed. */
   uint64_t instructionsCommitted_ = 0;
+
+ public:
+  /** Last committed PC, for diagnostics. */
+  uint64_t lastCommittedPC_ = 0;
+  /** Coarse PC histogram of committed ops: [low text, main+app, libc, other]. */
+  uint64_t pcBucket_[4] = {0,0,0,0};
+
+  /** Probe 1 (SIMENG_BRANCH_PROFILE=1): per-PC branch resolution counters.
+   * Map key = branch PC, value = {total_resolutions, mispredictions}. */
+  std::unordered_map<uint64_t, std::pair<uint64_t, uint64_t>> branchMissByPc_;
+  bool branchProfileEnabled_ = false;
+
+  /** Probe 5 (SIMENG_ROB_HOL_PROFILE=1): ROB head-of-line stall attribution.
+   * Index: 0=dep_wait, 1=branch_unresolved, 2=LSQ_pending,
+   *        3=exec_in_flight, 4=microop_sibling, 5=wb_lag. */
+  uint64_t holCycleByClass_[6] = {0,0,0,0,0,0};
+  std::unordered_map<uint64_t, uint64_t> holPcByClass_[6];
+  bool holProfileEnabled_ = false;
+  static constexpr const char* holClassName_[6] = {
+      "dep_wait", "branch_unresolved", "LSQ_pending",
+      "exec_in_flight", "microop_sibling", "wb_lag"};
+ private:
 
   /** The number of speculative loads which violated load-store ordering. */
   uint64_t loadViolations_ = 0;
