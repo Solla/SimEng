@@ -257,6 +257,17 @@ void TAGEPredictor::updateTaggedTables(bool isTaken, uint64_t target) {
   BranchPrediction pred = ftq_.front().prediction;
   BranchPrediction altPred = ftq_.front().altPrediction;
 
+  // Provider histogram (env-gated): bucket = predTable+1 so BTB-only -> 0.
+  if (tageProfileEnabled_) {
+    int bucket = predTable + 1;
+    if (bucket >= 0 && bucket < 8) {
+      bool wasCorrect = (pred.isTaken == isTaken) &&
+                        (!isTaken || (pred.target == target));
+      if (wasCorrect) providerHits_[bucket]++;
+      else providerMisses_[bucket]++;
+    }
+  }
+
   // Update the prediction counter if tagged prediction table was used
   if (predTable != -1) {
     uint64_t predIndex = indices.get()[predTable];
@@ -296,6 +307,22 @@ void TAGEPredictor::updateTaggedTables(bool isTaken, uint64_t target) {
     if (!wasUseful && currentU > 0) {
       (TAGETables_[predTable][indices.get()[predTable]].u)--;
     }
+  }
+
+  // Periodic u-counter aging. Standard TAGE decays all u-counters every
+  // ~256K updates so old saturated-useful entries can be displaced by new
+  // allocations. Without aging, u counters drift up to 3 and lock entries
+  // permanently, causing allocation to stall — ~30% of branches end up
+  // with no tagged-table hit, falling back to 11-bit BTB bimodal (~60%
+  // miss rate). Decay halves u (right shift) for graceful aging.
+  if (++updatesSinceUAging_ >= 262144) {
+    updatesSinceUAging_ = 0;
+    for (auto& table : TAGETables_) {
+      for (auto& entry : table) {
+        entry.u >>= 1;
+      }
+    }
+    if (tageProfileEnabled_) uAgingEvents_++;
   }
 }
 

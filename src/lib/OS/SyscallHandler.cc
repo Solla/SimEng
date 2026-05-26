@@ -766,6 +766,14 @@ void SyscallHandler::handleSyscall() {
       stateChange = {ChangeType::REPLACEMENT, {currentInfo_.ret}, {0ull}};
       break;
     }
+    case 260: {  // wait4
+      // SimEng runs a single simulated process; no children exist. Return
+      // -ECHILD so glibc's wait()/waitpid() wrappers translate to -1 + ECHILD
+      // and the caller's wait loop exits (e.g. dhrystone's num_threads=1 path).
+      stateChange = {ChangeType::REPLACEMENT, {currentInfo_.ret},
+                     {static_cast<int64_t>(-ECHILD)}};
+      break;
+    }
     case 261: {  // prlimit64
       pid_t pid = currentInfo_.registerArguments[0].get<pid_t>();
       int resource = currentInfo_.registerArguments[1].get<int>();

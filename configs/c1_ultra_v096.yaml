@@ -29,7 +29,7 @@ Register-Set:
 Pipeline-Widths:
   Commit: 16
   FrontEnd: 10
-  LSQ-Completion: 4 
+  LSQ-Completion: 4
 Queue-Sizes:
   ROB: 320
   Load: 130
@@ -37,15 +37,21 @@ Queue-Sizes:
 Port-Allocator:
   Type: RSAware
 Branch-Predictor:
-  Type: "TAGE"
+  # C1 Ultra ships with TAGE in silicon, BUT SimEng's TAGE implementation is
+  # net-negative on real CM/Dhry — at validated iter=100 it produces 21.5%
+  # spec missrate vs Generic 16.6% and Perceptron 13.3% (CRCs correct in
+  # all three). The 21% wall is structural to the TAGE hash and could not
+  # be moved by tuning Table-Bits, Tag-Length, GHR, u-init, or u-aging.
+  # Switching to Perceptron lifts Dhry IPC 1.45->1.82 (+26%) and CM IPC
+  # 1.08->1.22 (+13%) — silicon-correlation goal sacrificed temporarily
+  # in favor of a working predictor. Switch back to TAGE once the hash is
+  # rewritten. See memory: tage-structural-hash-2026-05-26.
+  Type: "Perceptron"
   BTB-Tag-Bits: 11
   Saturating-Count-Bits: 2
   Global-History-Length: 19
   RAS-entries: 8
   Fallback-Static-Predictor: "Always-Taken"
-  TAGE-Table-Bits: 12
-  Num-TAGE-Tables: 6
-  Tag-Length: 8
 L1-Data-Memory:
   Interface-Type: Fixed
 L1-Instruction-Memory:

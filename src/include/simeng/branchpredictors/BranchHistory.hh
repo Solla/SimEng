@@ -88,7 +88,10 @@ class BranchHistory {
       if (i == 0) {
         history_[i] |= ((isTaken) ? 1 : 0);
       } else {
-        history_[i] |= (history_[i - 1] & 0x80000000) >> 63;
+        // BUG FIX 2026-05-26: mask was 0x80000000 (bit 31) — would never
+        // carry to bit 63 since (1<<31) >> 63 == 0. Effective GHR capped at
+        // 64 bits regardless of size_. Use bit 63 of lower word.
+        history_[i] |= (history_[i - 1] & 0x8000000000000000ull) >> 63;
       }
     }
   }

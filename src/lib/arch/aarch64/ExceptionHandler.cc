@@ -99,6 +99,7 @@ bool ExceptionHandler::handleException() {
       case 222:    // mmap
       case 226:    // mprotect
       case 233:    // madvise
+      case 260:    // wait4
       case 261:    // prlimit64
       case 278:    // getrandom
       case 293: {  // rseq

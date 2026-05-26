@@ -182,6 +182,8 @@ void CoreInstance::createCore() {
   }
   if (bpType == "TAGE") {
     predictor_ = std::make_unique<simeng::TAGEPredictor>();
+  } else if (bpType == "Perceptron") {
+    predictor_ = std::make_unique<simeng::PerceptronPredictor>();
   } else {
     predictor_ = std::make_unique<simeng::GenericPredictor>();
   }

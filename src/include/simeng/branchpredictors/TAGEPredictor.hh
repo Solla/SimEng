@@ -169,6 +169,17 @@ class TAGEPredictor : public BranchPredictor {
   uint64_t rollBackCount_ = 0;
   uint64_t updateCount_ = 0;
   uint64_t updateHistoryFlipCount_ = 0;
+  // Provider histogram: providerHits_[i+1] counts predictions from table i,
+  // providerHits_[0] counts BTB-only (no tagged-table hit). Size 8 covers
+  // BTB + up to 7 tagged tables. providerMisses_ mirrors structure.
+  uint64_t providerHits_[8] = {0,0,0,0,0,0,0,0};
+  uint64_t providerMisses_[8] = {0,0,0,0,0,0,0,0};
+  // Periodic u-counter aging counter. Standard TAGE decays all u-counters
+  // every ~256K updates so saturated-useful entries don't lock out new
+  // allocations. Without this, allocation rate collapses over time and
+  // ~30% of branches end up with no tagged-table hit at steady state.
+  uint64_t updatesSinceUAging_ = 0;
+  uint64_t uAgingEvents_ = 0;
 
  public:
   /** Diagnostic accessors for SIMENG_TAGE_PROFILE bench. */
@@ -190,6 +201,21 @@ class TAGEPredictor : public BranchPredictor {
         {"tage.update", updateCount_},
         {"tage.updateHistoryFlip", updateHistoryFlipCount_},
         {"tage.ftqResidual", static_cast<uint64_t>(ftq_.size())},
+        {"tage.provider.BTB.hits", providerHits_[0]},
+        {"tage.provider.BTB.miss", providerMisses_[0]},
+        {"tage.provider.T0.hits", providerHits_[1]},
+        {"tage.provider.T0.miss", providerMisses_[1]},
+        {"tage.provider.T1.hits", providerHits_[2]},
+        {"tage.provider.T1.miss", providerMisses_[2]},
+        {"tage.provider.T2.hits", providerHits_[3]},
+        {"tage.provider.T2.miss", providerMisses_[3]},
+        {"tage.provider.T3.hits", providerHits_[4]},
+        {"tage.provider.T3.miss", providerMisses_[4]},
+        {"tage.provider.T4.hits", providerHits_[5]},
+        {"tage.provider.T4.miss", providerMisses_[5]},
+        {"tage.provider.T5.hits", providerHits_[6]},
+        {"tage.provider.T5.miss", providerMisses_[6]},
+        {"tage.uAgingEvents", uAgingEvents_},
         // Expected: ftq.size() == addHistory - rollBack - update.
         // Any divergence indicates a leak in the predict/flush/commit
         // accounting that corrupts global history state.
