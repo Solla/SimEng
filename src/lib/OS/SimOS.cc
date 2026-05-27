@@ -451,10 +451,13 @@ void SimOS::createSpecialFileDirectory() const {
 }
 
 uint64_t SimOS::getSystemTimer() const {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return static_cast<uint64_t>(ts.tv_sec) * 1000000000ULL +
-         static_cast<uint64_t>(ts.tv_nsec);
+  // Virtualised system timer: report simulated time derived from elapsed
+  // simulated cycles, not host wall-clock. ticks_ is incremented once per
+  // simulated cycle in SimOS::tick(). At Clock-Frequency-GHz, one cycle is
+  // 1/GHz nanoseconds, so elapsed ns = ticks_ / GHz.
+  const float clockFreqGHz =
+      Config::get()["Core"]["Clock-Frequency-GHz"].as<float>();
+  return static_cast<uint64_t>(static_cast<double>(ticks_) / clockFreqGHz);
 }
 
 void SimOS::receiveSyscall(SyscallInfo syscallInfo) const {
