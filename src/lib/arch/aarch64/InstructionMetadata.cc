@@ -75,9 +75,16 @@ InstructionMetadata::InstructionMetadata(const cs_insn& insn)
   uint8_t srcCount = 0;
   for (uint8_t i = 0; i < insn.detail->regs_read_count; i++) {
     uint16_t reg = insn.detail->regs_read[i];
-    if (reg != 0) {
-      implicitSources[srcCount++] = reg;
-    }
+    if (reg == 0) continue;
+    // Capstone reports FPCR as an implicit source for nearly every FP
+    // instruction (scvtf, fadd, fmul, fmadd, ...). SimEng's decoder pushes
+    // implicit sources to the FRONT of the operand list, which shifts every
+    // explicit FP operand by one slot and breaks execute helpers that read
+    // sourceValues[0..N-1]. SimEng does not model dynamic FPCR rounding, so
+    // drop the implicit read here. MRS/MSR FPCR still works via the explicit
+    // sysop operand path.
+    if (reg == AARCH64_REG_FPCR) continue;
+    implicitSources[srcCount++] = reg;
   }
   implicitSourceCount = srcCount;
 
