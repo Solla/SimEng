@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
 #include <iostream>
 #include <random>
@@ -611,6 +612,33 @@ void SyscallHandler::handleSyscall() {
       }
       break;
     }
+    case 160: {  // uname — fill struct utsname (6 × 65-byte char arrays).
+      // Geekbench reads uname() into a sysinfo JSON field; an unfilled
+      // (zero) buffer breaks jansson with "control character 0x0". Provide a
+      // plausible aarch64 Linux identity. struct utsname layout: each field
+      // is 65 bytes, sysname/nodename/release/version/machine/domainname,
+      // total 390 bytes.
+      uint64_t bufPtr = currentInfo_.registerArguments[0].get<uint64_t>();
+      const int kField = 65;
+      const int kFields = 6;
+      char uts[kField * kFields];
+      std::memset(uts, 0, sizeof(uts));
+      auto setField = [&](int idx, const char* s) {
+        std::strncpy(uts + idx * kField, s, kField - 1);
+      };
+      setField(0, "Linux");
+      setField(1, "simeng");
+      setField(2, "5.15.0-simeng");
+      setField(3, "#1 SMP SimEng aarch64");
+      setField(4, "aarch64");
+      setField(5, "(none)");
+      stateChange = {ChangeType::REPLACEMENT, {currentInfo_.ret}, {0ull}};
+      stateChange.memoryAddresses.push_back(
+          {bufPtr, static_cast<uint16_t>(sizeof(uts))});
+      stateChange.memoryAddressValues.push_back(
+          RegisterValue(uts, sizeof(uts)));
+      break;
+    }
     case 172: {  // getpid
       stateChange = {ChangeType::REPLACEMENT, {currentInfo_.ret}, {getpid()}};
       break;
@@ -865,6 +893,35 @@ void SyscallHandler::handleSyscall() {
   concludeSyscall(stateChange);
 }
 
+std::vector<char> SyscallHandler::readUntimedPaged(
+    uint64_t vaddr, uint64_t length, uint64_t& faultCode) {
+  std::vector<char> out;
+  out.reserve(length);
+  faultCode = 0;
+  uint64_t off = 0;
+  while (off < length) {
+    uint64_t va = vaddr + off;
+    uint64_t pageEnd =
+        (va & ~(defaults::PAGE_SIZE - 1)) + defaults::PAGE_SIZE;
+    uint64_t chunk = std::min<uint64_t>(pageEnd - va, length - off);
+
+    uint64_t pa = OS_->handleVAddrTranslation(va, currentInfo_.threadId);
+    uint64_t fc = simeng::OS::masks::faults::getFaultCode(pa);
+    if (fc == simeng::OS::masks::faults::pagetable::DATA_ABORT) {
+      faultCode = fc;  // fatal: stop, caller bails (partial data unused)
+      return out;
+    } else if (fc == simeng::OS::masks::faults::pagetable::IGNORED) {
+      faultCode = fc;
+      out.insert(out.end(), chunk, 0);
+    } else {
+      std::vector<char> d = memory_->getUntimedData(pa, chunk);
+      out.insert(out.end(), d.begin(), d.end());
+    }
+    off += chunk;
+  }
+  return out;
+}
+
 void SyscallHandler::readStringThen(
     std::array<char, PATH_MAX_LEN>& buffer, uint64_t address, int maxLength,
     std::function<void(size_t length)> then, int offset) {
@@ -872,32 +929,25 @@ void SyscallHandler::readStringThen(
     return then(offset);
   }
 
-  // Translate the passed virtual address, `address + offset`
-  uint64_t translatedAddr =
-      OS_->handleVAddrTranslation(address + offset, currentInfo_.threadId);
-
-  // Don't process the syscall if the virtual address translation comes back
-  // wih a DATA_ABORT or IGNORED fault. Given we read in a filename from
-  // `translatedAddr`, both a DATA_ABORT and IGNORED fault will result in a
-  // invalid filename and therefore, we cannot use it in further syscall
-  // logic.
-  uint64_t faultCode = simeng::OS::masks::faults::getFaultCode(translatedAddr);
+  // Read the string page-aware (it may straddle a page boundary onto a
+  // non-contiguous physical frame). Both a DATA_ABORT and an IGNORED fault
+  // mean we cannot form a valid filename, so bail.
+  uint64_t faultCode = 0;
+  std::vector<char> data =
+      readUntimedPaged(address + offset, maxLength, faultCode);
   if (faultCode == simeng::OS::masks::faults::pagetable::DATA_ABORT ||
       faultCode == simeng::OS::masks::faults::pagetable::IGNORED) {
     return concludeSyscall({}, true);
-  } else {
-    // Get a string from the simulation memory and within the passed buffer
-    std::vector<char> data = memory_->getUntimedData(translatedAddr, maxLength);
-
-    for (size_t i = 0; i < data.size(); i++) {
-      buffer[i] = data[i];
-      // End of string; call onwards
-      if (buffer[i] == '\0') return then(i + 1);
-    }
-
-    // Reached max length; call onwards
-    return then(maxLength);
   }
+
+  for (size_t i = 0; i < data.size(); i++) {
+    buffer[i] = data[i];
+    // End of string; call onwards
+    if (buffer[i] == '\0') return then(i + 1);
+  }
+
+  // Reached max length; call onwards
+  return then(maxLength);
 }
 
 void SyscallHandler::readBufferThen(
@@ -908,28 +958,13 @@ void SyscallHandler::readBufferThen(
     return then();
   }
 
-  // Vector to hold data read from memory, will be inserted at the end of
-  // dataBuffer_
-  std::vector<char> data;
-
-  // Translate the passed virtual address, `ptr`
-  uint64_t translatedAddr =
-      OS_->handleVAddrTranslation(ptr, currentInfo_.threadId);
-
-  // Don't process the syscall if the virtual address translation comes back
-  // wih a DATA_ABORT fault. If the address `translatedAddr` is not mapped, then
-  // we cannot insert any data at the end of `dataBuffer_`.
-  uint64_t faultCode = simeng::OS::masks::faults::getFaultCode(translatedAddr);
+  // Read the buffer page-aware so an access crossing a page boundary onto a
+  // non-contiguous physical frame is read from the correct frames. IGNORED
+  // pages are zero-filled; a DATA_ABORT on any page is fatal.
+  uint64_t faultCode = 0;
+  std::vector<char> data = readUntimedPaged(ptr, length, faultCode);
   if (faultCode == simeng::OS::masks::faults::pagetable::DATA_ABORT) {
     return concludeSyscall({}, true);
-  } else if (faultCode == simeng::OS::masks::faults::pagetable::IGNORED) {
-    // If the translated address lies within the ignored region, read in
-    // zero'ed out data of the correct length.
-    data.resize(length);
-    std::fill(data.begin(), data.end(), 0);
-  } else {
-    // Get data from the simulation memory and read into dataBuffer_
-    data = memory_->getUntimedData(translatedAddr, length);
   }
   dataBuffer_.insert(dataBuffer_.end(), data.begin(), data.begin() + length);
 
@@ -1008,6 +1043,22 @@ uint64_t SyscallHandler::getDirFd(int64_t dfd, std::string pathname) {
 }
 
 std::string SyscallHandler::getSpecialFile(const std::string filename) {
+  // /dev/urandom and /dev/random: pass through to the host. The simulated
+  // path is meaningful (random bytes for seeding etc.); not redirecting
+  // causes simulated programs to spin retrying open. The host's /dev/urandom
+  // is available inside the container regardless of cross-arch sysroot.
+  //
+  // Use substring matching (not exact ==), exactly like the supportedSpecial
+  // files loop below: the guest-supplied path can carry a trailing NUL (or
+  // other junk) past the C-string terminator, so an exact std::string compare
+  // silently fails even though c_str() prints "/dev/urandom". That false-miss
+  // fell through to the open-on-host-as-is path, the host open failed, and
+  // Geekbench spun forever retrying for entropy with no stdout (the 2026-05-30
+  // "99.9% CPU, no banner" hang). Check urandom before random ("/dev/random"
+  // is not a substring of "/dev/urandom", but order it defensively anyway) and
+  // return the clean canonical path so the host open can't inherit the junk.
+  if (filename.find("/dev/urandom") != std::string::npos) return "/dev/urandom";
+  if (filename.find("/dev/random") != std::string::npos) return "/dev/random";
   for (auto prefix : {"/dev/", "/proc/", "/sys/"}) {
     if (strncmp(filename.c_str(), prefix, strlen(prefix)) == 0) {
       for (size_t i = 0; i < supportedSpecialFiles_.size(); i++) {

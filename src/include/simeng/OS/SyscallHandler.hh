@@ -292,6 +292,17 @@ class SyscallHandler {
    * supplied path is held in the `length` parameter. */
   void readLinkAt(std::string path, size_t length);
 
+  /** Page-aware untimed read of `length` bytes from guest virtual address
+   * `vaddr`. Each page-portion is translated and read separately because
+   * demand-allocated physical frames are not contiguous, so a single
+   * translation + contiguous read would return wrong bytes for any access
+   * that crosses a page boundary. IGNORED pages read as zeros. `faultCode` is
+   * set to the fault of a faulting page (DATA_ABORT takes precedence and stops
+   * the read; IGNORED otherwise; 0 if clean). On no DATA_ABORT the returned
+   * buffer is exactly `length` bytes. */
+  std::vector<char> readUntimedPaged(uint64_t vaddr, uint64_t length,
+                                     uint64_t& faultCode);
+
   /** brk syscall: change data segment size. Sets the program break to
    * `addr` if reasonable, and returns the program break. */
   int64_t brk(uint64_t addr);

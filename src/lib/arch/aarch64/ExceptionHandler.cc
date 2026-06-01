@@ -345,6 +345,18 @@ void ExceptionHandler::printException() const {
   std::cout << std::endl;
   std::cout << "[SimEng:ExceptionHandler]       opcode ID: " << metadata.opcode
             << std::endl;
+
+  // For data aborts, print the faulting memory target address(es) so a
+  // null-deref (e.g. 0xfffffffffffffff8 == 0 - 8) can be told apart from a
+  // miscomputed/garbage pointer.
+  if (exception == InstructionException::DataAbort) {
+    for (const auto& target : instruction_->getGeneratedAddresses()) {
+      std::cout << "[SimEng:ExceptionHandler]       faulting addr: 0x"
+                << std::hex << std::setfill('0') << std::setw(16)
+                << target.address << " (size " << std::dec << target.size
+                << ")" << std::endl;
+    }
+  }
 }
 
 bool ExceptionHandler::fatal() {
