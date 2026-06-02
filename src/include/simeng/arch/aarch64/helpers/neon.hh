@@ -702,7 +702,13 @@ class neonHelp {
     D out[16 / sizeof(D)] = {0};
     int index = isShll2 ? I : 0;
     for (int i = 0; i < I; i++) {
-      out[i] = n[index] << shift;
+      // Widen to the destination type BEFORE shifting: ARM zero/sign-extends
+      // each element to the destination width and then shifts. `n[index]` is
+      // the narrow source type N, so `n[index] << shift` would evaluate in N's
+      // width (for N=uint32_t, which is not integer-promoted, the shift is done
+      // in 32 bits) and drop any bit shifted past the source MSB before the
+      // widening assignment — wrong for e.g. ushll vd.2d, vn.2s, #imm.
+      out[i] = static_cast<D>(n[index]) << shift;
       index++;
     }
     return {out, 256};
