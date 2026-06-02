@@ -194,6 +194,41 @@ D fcvtzu_integer(srcValContainer& sourceValues) {
   return result;
 }
 
+/** Helper function for instructions with the format fcvtpu rd, rn.
+ * Floating-point convert to unsigned integer, rounding toward +infinity.
+ * D is the destination register type (e.g. for Xd, D = uint64_t).
+ * N is the source register type (e.g. for Sn, N = float).
+ * Handles NaN (->0), negative/zero (->0; ceil of a value in (-1,0] is <=0),
+ * infinity and out-of-range (->saturate to max). Returns a single value of
+ * type D. Mirrors fcvtzu_integer but rounds with ceil instead of trunc. */
+template <typename D, typename N>
+D fcvtpu_integer(srcValContainer& sourceValues) {
+  static_assert((std::is_same<float, N>() || std::is_same<double, N>()) &&
+                "N is not a valid type which should be float or double");
+  static_assert((std::is_same<uint32_t, D>() || std::is_same<uint64_t, D>()) &&
+                "D is not a valid type which should be uint32_t or uint64_t");
+
+  N input = sourceValues[0].get<N>();
+  D result = static_cast<D>(0);
+
+  // Anything <= 0 (after rounding toward +inf, ceil of (-1,0] is -0/0) and NaN
+  // convert to 0 for an unsigned destination.
+  if (!std::isnan(input) && (input > static_cast<N>(0))) {
+    if (std::isinf(input)) {
+      result = std::numeric_limits<D>::max();
+    } else if (static_cast<double>(input) >=
+               static_cast<double>(std::numeric_limits<D>::max())) {
+      // Cast to double to avoid the float-can't-represent-uintmax precision
+      // error described in fcvtzu_integer; saturate to max.
+      result = std::numeric_limits<D>::max();
+    } else {
+      result = static_cast<D>(std::ceil(input));
+    }
+  }
+
+  return result;
+}
+
 /** Helper function for SCALAR/FP instructions with the format ucvtf rd, rn
  * #fbits.
  * D represents the destination register type (e.g. for Sd, D = float).

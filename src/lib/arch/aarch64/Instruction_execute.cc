@@ -2140,26 +2140,19 @@ void Instruction::execute() {
       }
       // FCVTPU: FP convert to unsigned, round toward +inf (ceil)
       case Opcode::AArch64_FCVTPUUWDr: {  // fcvtpu wd, dn
-        // TODO: Handle NaNs, denorms, and saturation
-        results[0] = {
-            static_cast<int32_t>(std::ceil(operands[0].get<double>())), 8};
+        results[0] = {floatHelp::fcvtpu_integer<uint32_t, double>(operands), 8};
         break;
       }
       case Opcode::AArch64_FCVTPUUWSr: {  // fcvtpu wd, sn
-        // TODO: Handle NaNs, denorms, and saturation
-        results[0] = {
-            static_cast<int32_t>(std::ceil(operands[0].get<float>())), 8};
+        results[0] = {floatHelp::fcvtpu_integer<uint32_t, float>(operands), 8};
         break;
       }
       case Opcode::AArch64_FCVTPUUXDr: {  // fcvtpu xd, dn
-        // TODO: Handle NaNs, denorms, and saturation
-        results[0] =
-            static_cast<int64_t>(std::ceil(operands[0].get<double>()));
+        results[0] = floatHelp::fcvtpu_integer<uint64_t, double>(operands);
         break;
       }
       case Opcode::AArch64_FCVTPUUXSr: {  // fcvtpu xd, sn
-        // TODO: Handle NaNs, denorms, and saturation
-        results[0] = static_cast<int64_t>(std::ceil(operands[0].get<float>()));
+        results[0] = floatHelp::fcvtpu_integer<uint64_t, float>(operands);
         break;
       }
       case Opcode::AArch64_FCVTZUv1i64: {  // fcvtzu dd, dn
