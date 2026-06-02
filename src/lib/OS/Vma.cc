@@ -27,17 +27,28 @@ HostFileMMap HostBackedFileMMaps::mapfd(int fd, size_t len, off_t offset) {
   off_t fstatFileSize = statbuf->st_size;
   free(statbuf);
   if (offset + len > fstatFileSize) {
-    // Linux file-backed mmap legally allows len > file region: bytes past EOF
-    // are zero-filled (and would SIGBUS only on access past the rounded-up
-    // page). glibc's loader uses this routinely. Clamp len to the available
-    // file bytes; the caller's VMA covers the full simulated `len` and the
-    // beyond-EOF tail is treated as zero (simulator memory is zero-initialised).
+    if (offset >= fstatFileSize) {
+      // The offset itself is at/beyond EOF: there are no file bytes to map
+      // here, and unlike a len that merely overruns EOF this cannot be
+      // satisfied by zero-filling a tail. Keep it an error.
+      std::cerr << "[SimEng:HostBackedFileMMaps] Tried to create host backed "
+                   "file mmap with offset and size greater "
+                   "than file size."
+                << std::endl;
+      std::exit(1);
+    }
+    // offset is within the file but len overruns EOF. Linux file-backed mmap
+    // legally allows this: bytes past EOF are zero-filled (SIGBUS only on
+    // access past the rounded-up page), and glibc's loader relies on it. Clamp
+    // len to the available file bytes; the caller's VMA still covers the full
+    // simulated `len` and the beyond-EOF tail reads as zero (simulator memory
+    // is zero-initialised). fstatFileSize - offset is >= 1 here, so the
+    // len == 0 abort below cannot trigger spuriously.
     std::cerr << "[SimEng:HostBackedFileMMaps] WARN: clamping host-backed mmap "
                  "len from " << len << " to " << (fstatFileSize - offset)
               << " (file size " << fstatFileSize << ", offset " << offset
               << ")." << std::endl;
     len = fstatFileSize - offset;
-    if (len == 0) len = 1; // avoid the len<=0 abort below
   }
   if (len <= 0) {
     std::cerr << "[SimEng:HostBackedFileMMaps] Cannot create host backed file "
