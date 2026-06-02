@@ -202,6 +202,22 @@ void Instruction::execute() {
         results[0] = neonHelp::vecSumElems_2ops<uint8_t, 8>(operands);
         break;
       }
+      case Opcode::AArch64_ADDVv16i8v: {  // addv bd, vn.16b
+        results[0] = neonHelp::vecSumElems_2ops<uint8_t, 16>(operands);
+        break;
+      }
+      case Opcode::AArch64_ADDVv4i16v: {  // addv hd, vn.4h
+        results[0] = neonHelp::vecSumElems_2ops<uint16_t, 4>(operands);
+        break;
+      }
+      case Opcode::AArch64_ADDVv8i16v: {  // addv hd, vn.8h
+        results[0] = neonHelp::vecSumElems_2ops<uint16_t, 8>(operands);
+        break;
+      }
+      case Opcode::AArch64_ADDVv4i32v: {  // addv sd, vn.4s
+        results[0] = neonHelp::vecSumElems_2ops<uint32_t, 4>(operands);
+        break;
+      }
       case Opcode::AArch64_ADDWri: {  // add wd, wn, #imm{, shift}
         auto [result, nzcv] =
             arithmeticHelp::addShift_imm<uint32_t>(operands, metadata, false);
@@ -654,6 +670,67 @@ void Instruction::execute() {
             [](int64_t x, int64_t y) -> bool { return (x == y); });
         break;
       }
+      // Scalar (1-lane) zero-compare and reg-form variants on D registers.
+      case Opcode::AArch64_CMGEv1i64rz: {  // cmge dd, dn, #0
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv1i64rz: {  // cmgt dd, dn, #0
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv1i64rz: {  // cmle dd, dn, #0
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv1i64rz: {  // cmlt dd, dn, #0
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv1i64: {  // cmge dd, dn, dm
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, false,
+            [](int64_t x, int64_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv1i64: {  // cmgt dd, dn, dm
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, false,
+            [](int64_t x, int64_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHIv1i64: {  // cmhi dd, dn, dm (unsigned >)
+        results[0] = neonHelp::vecCompare<uint64_t, 1>(
+            operands, false,
+            [](uint64_t x, uint64_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHSv1i64: {  // cmhs dd, dn, dm (unsigned >=)
+        results[0] = neonHelp::vecCompare<uint64_t, 1>(
+            operands, false,
+            [](uint64_t x, uint64_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv1i64: {  // cmtst dd, dn, dm
+        results[0] = neonHelp::vecCompare<uint64_t, 1>(
+            operands, false,
+            [](uint64_t x, uint64_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMEQv1i64: {  // cmeq dd, dn, dm
+        results[0] = neonHelp::vecCompare<int64_t, 1>(
+            operands, false,
+            [](int64_t x, int64_t y) -> bool { return x == y; });
+        break;
+      }
       case Opcode::AArch64_CMEQv4i32: {  // cmeq vd.4s, vn.4s, vm.4s
         results[0] = neonHelp::vecCompare<uint32_t, 4>(
             operands, false,
@@ -717,6 +794,379 @@ void Instruction::execute() {
         results[0] = neonHelp::vecCompare<uint8_t, 16>(
             operands, false,
             [](uint8_t x, uint8_t y) -> bool { return (x >= y); });
+        break;
+      }
+      // --- NEON compare batch added 2026-05-30 for Geekbench coverage ---
+      // CMTST: per-lane (Vn & Vm) != 0 (unsigned), sets lane to all-1s on true.
+      case Opcode::AArch64_CMTSTv16i8: {
+        results[0] = neonHelp::vecCompare<uint8_t, 16>(
+            operands, false,
+            [](uint8_t x, uint8_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv8i8: {
+        results[0] = neonHelp::vecCompare<uint8_t, 8>(
+            operands, false,
+            [](uint8_t x, uint8_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv8i16: {
+        results[0] = neonHelp::vecCompare<uint16_t, 8>(
+            operands, false,
+            [](uint16_t x, uint16_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv4i16: {
+        results[0] = neonHelp::vecCompare<uint16_t, 4>(
+            operands, false,
+            [](uint16_t x, uint16_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv4i32: {
+        results[0] = neonHelp::vecCompare<uint32_t, 4>(
+            operands, false,
+            [](uint32_t x, uint32_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv2i32: {
+        results[0] = neonHelp::vecCompare<uint32_t, 2>(
+            operands, false,
+            [](uint32_t x, uint32_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      case Opcode::AArch64_CMTSTv2i64: {
+        results[0] = neonHelp::vecCompare<uint64_t, 2>(
+            operands, false,
+            [](uint64_t x, uint64_t y) -> bool { return (x & y) != 0; });
+        break;
+      }
+      // CMGT (signed greater-than) — register form
+      case Opcode::AArch64_CMGTv16i8: {
+        results[0] = neonHelp::vecCompare<int8_t, 16>(
+            operands, false,
+            [](int8_t x, int8_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv8i8: {
+        results[0] = neonHelp::vecCompare<int8_t, 8>(
+            operands, false,
+            [](int8_t x, int8_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv8i16: {
+        results[0] = neonHelp::vecCompare<int16_t, 8>(
+            operands, false,
+            [](int16_t x, int16_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv4i16: {
+        results[0] = neonHelp::vecCompare<int16_t, 4>(
+            operands, false,
+            [](int16_t x, int16_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv4i32: {
+        results[0] = neonHelp::vecCompare<int32_t, 4>(
+            operands, false,
+            [](int32_t x, int32_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv2i32: {
+        results[0] = neonHelp::vecCompare<int32_t, 2>(
+            operands, false,
+            [](int32_t x, int32_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv2i64: {
+        results[0] = neonHelp::vecCompare<int64_t, 2>(
+            operands, false,
+            [](int64_t x, int64_t y) -> bool { return x > y; });
+        break;
+      }
+      // CMGE (signed greater-or-equal) — register form
+      case Opcode::AArch64_CMGEv16i8: {
+        results[0] = neonHelp::vecCompare<int8_t, 16>(
+            operands, false,
+            [](int8_t x, int8_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv8i8: {
+        results[0] = neonHelp::vecCompare<int8_t, 8>(
+            operands, false,
+            [](int8_t x, int8_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv8i16: {
+        results[0] = neonHelp::vecCompare<int16_t, 8>(
+            operands, false,
+            [](int16_t x, int16_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv4i16: {
+        results[0] = neonHelp::vecCompare<int16_t, 4>(
+            operands, false,
+            [](int16_t x, int16_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv4i32: {
+        results[0] = neonHelp::vecCompare<int32_t, 4>(
+            operands, false,
+            [](int32_t x, int32_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv2i32: {
+        results[0] = neonHelp::vecCompare<int32_t, 2>(
+            operands, false,
+            [](int32_t x, int32_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv2i64: {
+        results[0] = neonHelp::vecCompare<int64_t, 2>(
+            operands, false,
+            [](int64_t x, int64_t y) -> bool { return x >= y; });
+        break;
+      }
+      // CMHI (unsigned higher) - remaining sizes
+      case Opcode::AArch64_CMHIv16i8: {
+        results[0] = neonHelp::vecCompare<uint8_t, 16>(
+            operands, false,
+            [](uint8_t x, uint8_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHIv8i8: {
+        results[0] = neonHelp::vecCompare<uint8_t, 8>(
+            operands, false,
+            [](uint8_t x, uint8_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHIv8i16: {
+        results[0] = neonHelp::vecCompare<uint16_t, 8>(
+            operands, false,
+            [](uint16_t x, uint16_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHIv4i16: {
+        results[0] = neonHelp::vecCompare<uint16_t, 4>(
+            operands, false,
+            [](uint16_t x, uint16_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHIv2i32: {
+        results[0] = neonHelp::vecCompare<uint32_t, 2>(
+            operands, false,
+            [](uint32_t x, uint32_t y) -> bool { return x > y; });
+        break;
+      }
+      case Opcode::AArch64_CMHIv2i64: {
+        results[0] = neonHelp::vecCompare<uint64_t, 2>(
+            operands, false,
+            [](uint64_t x, uint64_t y) -> bool { return x > y; });
+        break;
+      }
+      // CMHS (unsigned higher-or-same) - remaining sizes
+      case Opcode::AArch64_CMHSv8i8: {
+        results[0] = neonHelp::vecCompare<uint8_t, 8>(
+            operands, false,
+            [](uint8_t x, uint8_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMHSv8i16: {
+        results[0] = neonHelp::vecCompare<uint16_t, 8>(
+            operands, false,
+            [](uint16_t x, uint16_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMHSv4i16: {
+        results[0] = neonHelp::vecCompare<uint16_t, 4>(
+            operands, false,
+            [](uint16_t x, uint16_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMHSv4i32: {
+        results[0] = neonHelp::vecCompare<uint32_t, 4>(
+            operands, false,
+            [](uint32_t x, uint32_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMHSv2i32: {
+        results[0] = neonHelp::vecCompare<uint32_t, 2>(
+            operands, false,
+            [](uint32_t x, uint32_t y) -> bool { return x >= y; });
+        break;
+      }
+      case Opcode::AArch64_CMHSv2i64: {
+        results[0] = neonHelp::vecCompare<uint64_t, 2>(
+            operands, false,
+            [](uint64_t x, uint64_t y) -> bool { return x >= y; });
+        break;
+      }
+      // Zero-compare variants (CMGT/CMGE/CMLE/CMLT vs #0, signed).
+      case Opcode::AArch64_CMGTv16i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 16>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv8i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 8>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv8i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 8>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv4i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 4>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv4i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 4>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv2i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 2>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGTv2i64rz: {
+        results[0] = neonHelp::vecCompare<int64_t, 2>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x > 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv16i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 16>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv8i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 8>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv8i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 8>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv4i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 4>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv4i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 4>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv2i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 2>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMGEv2i64rz: {
+        results[0] = neonHelp::vecCompare<int64_t, 2>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x >= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv16i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 16>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv8i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 8>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv8i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 8>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv4i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 4>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv4i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 4>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv2i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 2>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLEv2i64rz: {
+        results[0] = neonHelp::vecCompare<int64_t, 2>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x <= 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv16i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 16>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv8i8rz: {
+        results[0] = neonHelp::vecCompare<int8_t, 8>(
+            operands, true,
+            [](int8_t x, int8_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv8i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 8>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv4i16rz: {
+        results[0] = neonHelp::vecCompare<int16_t, 4>(
+            operands, true,
+            [](int16_t x, int16_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv4i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 4>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv2i32rz: {
+        results[0] = neonHelp::vecCompare<int32_t, 2>(
+            operands, true,
+            [](int32_t x, int32_t y) -> bool { return x < 0; });
+        break;
+      }
+      case Opcode::AArch64_CMLTv2i64rz: {
+        results[0] = neonHelp::vecCompare<int64_t, 2>(
+            operands, true,
+            [](int64_t x, int64_t y) -> bool { return x < 0; });
         break;
       }
       case Opcode::AArch64_CMPEQ_PPzZI_B: {  // cmpeq pd.b, pg/z, zn.b, #imm
@@ -1688,6 +2138,30 @@ void Instruction::execute() {
         results[0] = static_cast<int64_t>(std::trunc(operands[0].get<float>()));
         break;
       }
+      // FCVTPU: FP convert to unsigned, round toward +inf (ceil)
+      case Opcode::AArch64_FCVTPUUWDr: {  // fcvtpu wd, dn
+        // TODO: Handle NaNs, denorms, and saturation
+        results[0] = {
+            static_cast<int32_t>(std::ceil(operands[0].get<double>())), 8};
+        break;
+      }
+      case Opcode::AArch64_FCVTPUUWSr: {  // fcvtpu wd, sn
+        // TODO: Handle NaNs, denorms, and saturation
+        results[0] = {
+            static_cast<int32_t>(std::ceil(operands[0].get<float>())), 8};
+        break;
+      }
+      case Opcode::AArch64_FCVTPUUXDr: {  // fcvtpu xd, dn
+        // TODO: Handle NaNs, denorms, and saturation
+        results[0] =
+            static_cast<int64_t>(std::ceil(operands[0].get<double>()));
+        break;
+      }
+      case Opcode::AArch64_FCVTPUUXSr: {  // fcvtpu xd, sn
+        // TODO: Handle NaNs, denorms, and saturation
+        results[0] = static_cast<int64_t>(std::ceil(operands[0].get<float>()));
+        break;
+      }
       case Opcode::AArch64_FCVTZUv1i64: {  // fcvtzu dd, dn
         // TODO: Handle NaNs, denorms, and saturation
         double res = std::trunc(operands[0].get<double>());
@@ -1734,6 +2208,16 @@ void Instruction::execute() {
       case Opcode::AArch64_FDIVv2f64: {  // fdiv vd.2d, vn.2d, vm.2d
         results[0] = neonHelp::vecLogicOp_3vecs<double, 2>(
             operands, [](double x, double y) -> double { return x / y; });
+        break;
+      }
+      case Opcode::AArch64_FDIVv4f32: {  // fdiv vd.4s, vn.4s, vm.4s
+        results[0] = neonHelp::vecLogicOp_3vecs<float, 4>(
+            operands, [](float x, float y) -> float { return x / y; });
+        break;
+      }
+      case Opcode::AArch64_FDIVv2f32: {  // fdiv vd.2s, vn.2s, vm.2s
+        results[0] = neonHelp::vecLogicOp_3vecs<float, 2>(
+            operands, [](float x, float y) -> float { return x / y; });
         break;
       }
       case Opcode::AArch64_FDUP_ZI_D: {  // fdup zd.d, #imm
@@ -2138,6 +2622,150 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_FRINTPSr: {  // frintp sd, sn
         results[0] = floatHelp::frintpScalar_2ops<float>(operands);
+        break;
+      }
+      // FRINTM: round to integral, toward -inf (floor)
+      case Opcode::AArch64_FRINTMDr: {  // frintm dd, dn
+        results[0] = {std::floor(operands[0].get<double>()), 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTMSr: {  // frintm sd, sn
+        results[0] = {std::floor(operands[0].get<float>()), 256};
+        break;
+      }
+      // FRINTZ: round to integral, toward zero (trunc)
+      case Opcode::AArch64_FRINTZDr: {  // frintz dd, dn
+        results[0] = {std::trunc(operands[0].get<double>()), 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTZSr: {  // frintz sd, sn
+        results[0] = {std::trunc(operands[0].get<float>()), 256};
+        break;
+      }
+      // FRINTX: round to integral, current mode (nearbyint). May signal inexact;
+      // we don't model FP exceptions so behaviour matches FRINTI.
+      case Opcode::AArch64_FRINTXDr: {  // frintx dd, dn
+        results[0] = {std::nearbyint(operands[0].get<double>()), 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTXSr: {  // frintx sd, sn
+        results[0] = {std::nearbyint(operands[0].get<float>()), 256};
+        break;
+      }
+      // FRINTI: round to integral, current mode (rint).
+      case Opcode::AArch64_FRINTIDr: {  // frinti dd, dn
+        results[0] = {std::rint(operands[0].get<double>()), 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTISr: {  // frinti sd, sn
+        results[0] = {std::rint(operands[0].get<float>()), 256};
+        break;
+      }
+      // FRINTN: round to integral, ties to even. (scalar variants — vector SVE
+      // already covered above.)
+      case Opcode::AArch64_FRINTNDr: {  // frintn dd, dn
+        results[0] = {std::nearbyint(operands[0].get<double>()), 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTNSr: {  // frintn sd, sn
+        results[0] = {std::nearbyint(operands[0].get<float>()), 256};
+        break;
+      }
+      // NEON vector forms (2d / 4s / 2s) for all rounding modes.
+      case Opcode::AArch64_FRINTMv2f64: {
+        const double* v = operands[0].getAsVector<double>();
+        double out[2] = {std::floor(v[0]), std::floor(v[1])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTMv4f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::floor(v[0]), std::floor(v[1]),
+                        std::floor(v[2]), std::floor(v[3])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTMv2f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::floor(v[0]), std::floor(v[1]), 0.0f, 0.0f};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTPv2f64: {
+        const double* v = operands[0].getAsVector<double>();
+        double out[2] = {std::ceil(v[0]), std::ceil(v[1])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTPv4f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::ceil(v[0]), std::ceil(v[1]),
+                        std::ceil(v[2]), std::ceil(v[3])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTPv2f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::ceil(v[0]), std::ceil(v[1]), 0.0f, 0.0f};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTZv2f64: {
+        const double* v = operands[0].getAsVector<double>();
+        double out[2] = {std::trunc(v[0]), std::trunc(v[1])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTZv4f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::trunc(v[0]), std::trunc(v[1]),
+                        std::trunc(v[2]), std::trunc(v[3])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTZv2f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::trunc(v[0]), std::trunc(v[1]), 0.0f, 0.0f};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTAv2f64: {
+        const double* v = operands[0].getAsVector<double>();
+        double out[2] = {std::round(v[0]), std::round(v[1])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTAv4f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::round(v[0]), std::round(v[1]),
+                        std::round(v[2]), std::round(v[3])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTAv2f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::round(v[0]), std::round(v[1]), 0.0f, 0.0f};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTNv2f64: {
+        const double* v = operands[0].getAsVector<double>();
+        double out[2] = {std::nearbyint(v[0]), std::nearbyint(v[1])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTNv4f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::nearbyint(v[0]), std::nearbyint(v[1]),
+                        std::nearbyint(v[2]), std::nearbyint(v[3])};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_FRINTNv2f32: {
+        const float* v = operands[0].getAsVector<float>();
+        float out[4] = {std::nearbyint(v[0]), std::nearbyint(v[1]),
+                        0.0f, 0.0f};
+        results[0] = {out, 256};
         break;
       }
       case Opcode::AArch64_FRSQRTEv1i32: {  // frsqrte sd, sn
@@ -3168,6 +3796,16 @@ void Instruction::execute() {
         results[0] = memoryData[0];
         break;
       }
+      case Opcode::AArch64_LDAXRB: {  // ldaxrb wd, [xn]
+        // LOAD (byte, zero-extend to 64-bit GP slot)
+        results[0] = memoryData[0].zeroExtend(1, 8);
+        break;
+      }
+      case Opcode::AArch64_LDAXRH: {  // ldaxrh wd, [xn]
+        // LOAD (half-word, zero-extend to 64-bit GP slot)
+        results[0] = memoryData[0].zeroExtend(2, 8);
+        break;
+      }
       case Opcode::AArch64_LDAXRW: {  // ldaxr wd, [xn]
         // LOAD
         results[0] = memoryData[0].zeroExtend(4, 8);
@@ -3619,6 +4257,16 @@ void Instruction::execute() {
         results[0] = memoryData[0];
         break;
       }
+      case Opcode::AArch64_LDXRB: {  // ldxrb wt, [xn]
+        // LOAD (byte, zero-extend to 64-bit GP slot)
+        results[0] = memoryData[0].zeroExtend(1, 8);
+        break;
+      }
+      case Opcode::AArch64_LDXRH: {  // ldxrh wt, [xn]
+        // LOAD (half-word, zero-extend to 64-bit GP slot)
+        results[0] = memoryData[0].zeroExtend(2, 8);
+        break;
+      }
       case Opcode::AArch64_LDXRW: {  // ldxr wt, [xn]
         // LOAD
         results[0] = memoryData[0].zeroExtend(4, 8);
@@ -3918,6 +4566,48 @@ void Instruction::execute() {
             operands, [](uint8_t x, uint8_t y) -> uint8_t { return x | y; });
         break;
       }
+      // ORR (immediate, vector): vd <- vd | imm-broadcast. operand[0] is the
+      // destination register read back; metadata.operands[1] carries the
+      // immediate (and optional LSL shift) per Capstone's representation.
+      case Opcode::AArch64_ORRv2i32: {  // orr vd.2s, #imm{, lsl #shift}
+        uint32_t imm = static_cast<uint32_t>(metadata.operands[1].imm)
+                       << metadata.operands[1].shift.value;
+        const uint32_t* v = operands[0].getAsVector<uint32_t>();
+        uint32_t out[4] = {v[0] | imm, v[1] | imm, 0, 0};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_ORRv4i32: {  // orr vd.4s, #imm{, lsl #shift}
+        uint32_t imm = static_cast<uint32_t>(metadata.operands[1].imm)
+                       << metadata.operands[1].shift.value;
+        const uint32_t* v = operands[0].getAsVector<uint32_t>();
+        uint32_t out[4] = {v[0] | imm, v[1] | imm, v[2] | imm, v[3] | imm};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_ORRv4i16: {  // orr vd.4h, #imm{, lsl #shift}
+        uint16_t imm = static_cast<uint16_t>(
+            static_cast<uint32_t>(metadata.operands[1].imm)
+            << metadata.operands[1].shift.value);
+        const uint16_t* v = operands[0].getAsVector<uint16_t>();
+        uint16_t out[8] = {static_cast<uint16_t>(v[0] | imm),
+                           static_cast<uint16_t>(v[1] | imm),
+                           static_cast<uint16_t>(v[2] | imm),
+                           static_cast<uint16_t>(v[3] | imm),
+                           0, 0, 0, 0};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_ORRv8i16: {  // orr vd.8h, #imm{, lsl #shift}
+        uint16_t imm = static_cast<uint16_t>(
+            static_cast<uint32_t>(metadata.operands[1].imm)
+            << metadata.operands[1].shift.value);
+        const uint16_t* v = operands[0].getAsVector<uint16_t>();
+        uint16_t out[8];
+        for (int i = 0; i < 8; i++) out[i] = v[i] | imm;
+        results[0] = {out, 256};
+        break;
+      }
       case Opcode::AArch64_PFALSE: {  // pfalse pd.b
         uint64_t out[4] = {0, 0, 0, 0};
         results[0] = out;
@@ -3991,6 +4681,33 @@ void Instruction::execute() {
       case Opcode::AArch64_RET: {  // ret {xr}
         branchTaken_ = true;
         branchAddress_ = operands[0].get<uint64_t>();
+        break;
+      }
+      // Scalar REV — byte-reverse GP registers. REVXr already exists at the
+      // REV64 section below, using bitmanipHelp::rev<uint64_t>; only REVWr +
+      // REV16W/X + REV32X are added here.
+      case Opcode::AArch64_REVWr: {  // rev wd, wn
+        results[0] = {__builtin_bswap32(operands[0].get<uint32_t>()), 8};
+        break;
+      }
+      case Opcode::AArch64_REV16Wr: {  // rev16 wd, wn  (swap byte pairs in each halfword)
+        uint32_t x = operands[0].get<uint32_t>();
+        uint32_t out = ((x & 0xFF00FF00u) >> 8) | ((x & 0x00FF00FFu) << 8);
+        results[0] = {out, 8};
+        break;
+      }
+      case Opcode::AArch64_REV16Xr: {  // rev16 xd, xn
+        uint64_t x = operands[0].get<uint64_t>();
+        uint64_t out = ((x & 0xFF00FF00FF00FF00ull) >> 8) |
+                       ((x & 0x00FF00FF00FF00FFull) << 8);
+        results[0] = out;
+        break;
+      }
+      case Opcode::AArch64_REV32Xr: {  // rev32 xd, xn  (swap bytes within each 32-bit half)
+        uint64_t x = operands[0].get<uint64_t>();
+        uint64_t lo = __builtin_bswap32(static_cast<uint32_t>(x));
+        uint64_t hi = __builtin_bswap32(static_cast<uint32_t>(x >> 32));
+        results[0] = (hi << 32) | lo;
         break;
       }
       case Opcode::AArch64_REV16v16i8: {  // rev16 Vd.16b, Vn.16b
@@ -4264,9 +4981,26 @@ void Instruction::execute() {
         break;
       }
       case Opcode::AArch64_SMULHrr: {  // smulh xd, xn, xm
-        // TODO: signed
-        results[0] = AuxFunc::mulhi(
-            operands[0].get<uint64_t>(), operands[1].get<uint64_t>());
+        // SIGNED multiply-high. The previous implementation used the unsigned
+        // mulhi() (with a "TODO: signed" note), so any operand with bit 63 set
+        // was treated as a large positive value instead of negative, yielding
+        // the wrong high 64 bits. Compilers emit `smulh` as the core of signed
+        // division-by-constant (magic-reciprocal multiply, e.g. the
+        // `0x8888888888888889`-style constants whose top bit is set, followed
+        // by `asr`/`sub xN, xN, src, asr #63`). With the unsigned result the
+        // quotient is wrong, so a loop counter driven by such a division never
+        // reaches its bound. That is the Geekbench-6 startup infinite loop at
+        // ~0x4000001d9f80 (entered even for `--help`); Dhrystone/CoreMark never
+        // hit a high-bit-set signed case so they masked it. Found+fixed
+        // 2026-05-31. Derive the signed high word from the unsigned one without
+        // __int128 (-Werror=pedantic forbids it): mulhs(a,b) = mulhu(a,b)
+        // - (a<0 ? b : 0) - (b<0 ? a : 0), arithmetic mod 2^64.
+        const uint64_t ua = operands[0].get<uint64_t>();
+        const uint64_t ub = operands[1].get<uint64_t>();
+        uint64_t high = AuxFunc::mulhi(ua, ub);
+        if (ua >> 63) high -= ub;
+        if (ub >> 63) high -= ua;
+        results[0] = high;
         break;
       }
       case Opcode::AArch64_SSHLLv2i32_shift: {  // sshll vd.2d, vn.2s, #imm
@@ -4735,6 +5469,8 @@ void Instruction::execute() {
         memoryData[0] = operands[0];
         break;
       }
+      case Opcode::AArch64_STLXRB:    // stlxrb ws, wt, [xn]
+      case Opcode::AArch64_STLXRH:    // stlxrh ws, wt, [xn]
       case Opcode::AArch64_STLXRW:    // stlxr ws, wt, [xn]
       case Opcode::AArch64_STLXRX: {  // stlxr ws, xt, [xn]
         // STORE
@@ -4949,6 +5685,8 @@ void Instruction::execute() {
         memoryData[0] = operands[0];
         break;
       }
+      case Opcode::AArch64_STXRB:    // stxrb ws, wt, [xn]
+      case Opcode::AArch64_STXRH:    // stxrh ws, wt, [xn]
       case Opcode::AArch64_STXRW: {  // stxr ws, wt, [xn]
         // STORE
         memoryData[0] = operands[0];
@@ -5326,6 +6064,24 @@ void Instruction::execute() {
         results[0] = {static_cast<double>(operands[0].get<uint64_t>()), 256};
         break;
       }
+      case Opcode::AArch64_UCVTFv2f64: {  // ucvtf vd.2d, vn.2d
+        results[0] = neonHelp::vecScvtf_2vecs<double, uint64_t, 2>(
+            operands,
+            [](uint64_t x) -> double { return static_cast<double>(x); });
+        break;
+      }
+      case Opcode::AArch64_UCVTFv4f32: {  // ucvtf vd.4s, vn.4s
+        results[0] = neonHelp::vecScvtf_2vecs<float, uint32_t, 4>(
+            operands,
+            [](uint32_t x) -> float { return static_cast<float>(x); });
+        break;
+      }
+      case Opcode::AArch64_UCVTFv2f32: {  // ucvtf vd.2s, vn.2s
+        results[0] = neonHelp::vecScvtf_2vecs<float, uint32_t, 2>(
+            operands,
+            [](uint32_t x) -> float { return static_cast<float>(x); });
+        break;
+      }
       case Opcode::AArch64_UDIVWr: {  // udiv wd, wn, wm
         results[0] = {divideHelp::div_3ops<uint32_t>(operands), 8};
         break;
@@ -5344,6 +6100,87 @@ void Instruction::execute() {
       }
       case Opcode::AArch64_UMINPv16i8: {  // uminp vd.16b, vn.16b, vm.16b
         results[0] = neonHelp::vecUMinP<uint8_t, 16>(operands);
+        break;
+      }
+      // Across-vector min/max reductions (scalar result in lane 0).
+      case Opcode::AArch64_UMINVv16i8v: {  // uminv bd, vn.16b
+        const uint8_t* v = operands[0].getAsVector<uint8_t>();
+        uint8_t m = v[0];
+        for (int i = 1; i < 16; i++) if (v[i] < m) m = v[i];
+        uint8_t out[16] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMINVv8i8v: {  // uminv bd, vn.8b
+        const uint8_t* v = operands[0].getAsVector<uint8_t>();
+        uint8_t m = v[0];
+        for (int i = 1; i < 8; i++) if (v[i] < m) m = v[i];
+        uint8_t out[16] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMINVv8i16v: {  // uminv hd, vn.8h
+        const uint16_t* v = operands[0].getAsVector<uint16_t>();
+        uint16_t m = v[0];
+        for (int i = 1; i < 8; i++) if (v[i] < m) m = v[i];
+        uint16_t out[8] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMINVv4i16v: {  // uminv hd, vn.4h
+        const uint16_t* v = operands[0].getAsVector<uint16_t>();
+        uint16_t m = v[0];
+        for (int i = 1; i < 4; i++) if (v[i] < m) m = v[i];
+        uint16_t out[8] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMINVv4i32v: {  // uminv sd, vn.4s
+        const uint32_t* v = operands[0].getAsVector<uint32_t>();
+        uint32_t m = v[0];
+        for (int i = 1; i < 4; i++) if (v[i] < m) m = v[i];
+        uint32_t out[4] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMAXVv16i8v: {  // umaxv bd, vn.16b
+        const uint8_t* v = operands[0].getAsVector<uint8_t>();
+        uint8_t m = v[0];
+        for (int i = 1; i < 16; i++) if (v[i] > m) m = v[i];
+        uint8_t out[16] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMAXVv8i8v: {  // umaxv bd, vn.8b
+        const uint8_t* v = operands[0].getAsVector<uint8_t>();
+        uint8_t m = v[0];
+        for (int i = 1; i < 8; i++) if (v[i] > m) m = v[i];
+        uint8_t out[16] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMAXVv8i16v: {  // umaxv hd, vn.8h
+        const uint16_t* v = operands[0].getAsVector<uint16_t>();
+        uint16_t m = v[0];
+        for (int i = 1; i < 8; i++) if (v[i] > m) m = v[i];
+        uint16_t out[8] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMAXVv4i16v: {  // umaxv hd, vn.4h
+        const uint16_t* v = operands[0].getAsVector<uint16_t>();
+        uint16_t m = v[0];
+        for (int i = 1; i < 4; i++) if (v[i] > m) m = v[i];
+        uint16_t out[8] = {m};
+        results[0] = {out, 256};
+        break;
+      }
+      case Opcode::AArch64_UMAXVv4i32v: {  // umaxv sd, vn.4s
+        const uint32_t* v = operands[0].getAsVector<uint32_t>();
+        uint32_t m = v[0];
+        for (int i = 1; i < 4; i++) if (v[i] > m) m = v[i];
+        uint32_t out[4] = {m};
+        results[0] = {out, 256};
         break;
       }
       case Opcode::AArch64_UMOVvi32_idx0:  // umov wd, vn.s[0]
@@ -5411,6 +6248,16 @@ void Instruction::execute() {
       case Opcode::AArch64_USHLLv8i8_shift: {  // ushll vd.8h, vn.8b, #imm
         results[0] = neonHelp::vecShllShift_vecImm<uint16_t, uint8_t, 8>(
             operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_USHLLv2i32_shift: {  // ushll vd.2d, vn.2s, #imm
+        results[0] = neonHelp::vecShllShift_vecImm<uint64_t, uint32_t, 2>(
+            operands, metadata, false);
+        break;
+      }
+      case Opcode::AArch64_USHLLv4i32_shift: {  // ushll2 vd.2d, vn.4s, #imm
+        results[0] = neonHelp::vecShllShift_vecImm<uint64_t, uint32_t, 2>(
+            operands, metadata, true);
         break;
       }
       case Opcode::AArch64_UUNPKHI_ZZ_D: {  // uunpkhi zd.d, zn.s

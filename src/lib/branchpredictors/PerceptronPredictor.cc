@@ -22,6 +22,17 @@ PerceptronPredictor::PerceptronPredictor(ryml::ConstNodeRef config)
   // Set up training threshold according to empirically determined formula
   trainingThreshold_ = (uint64_t)((1.93 * globalHistoryLength_) + 14);
 
+  // NOTE: `(len * 2) - 1` is mathematically wrong as a bit-mask for a
+  // `len`-bit GHR (would be `(1 << len) - 1`). With len=19 this yields 37 =
+  // 0b100101, retaining only bits 0/2/5 of GHR — the predictor is effectively
+  // a 3-input perceptron, not 19. However, fixing the mask to the algebraically
+  // correct form REGRESSES every workload 47-48% (Dhry 2.575→1.37, CM 1.54→0.80)
+  // because the now-19-input perceptron is under-trained on these short
+  // benchmark runs. The "bug" is acting as an unintentional dimensionality
+  // reduction that the predictor's training-vs-runtime budget actually relies
+  // on. Leaving the original formula; documenting the trap. To genuinely move
+  // to 19-bit history, the predictor needs either much longer training or a
+  // different training scheme (and to source the GHL value from ARM spec).
   globalHistoryMask_ = (globalHistoryLength_ * 2) - 1;
 }
 
@@ -131,10 +142,33 @@ void PerceptronPredictor::update(uint64_t address, bool taken,
   btb_[hashedIndex].first = perceptron;
   btb_[hashedIndex].second = targetAddress;
 
-  // Update global history if prediction was incorrect
-  // Bit-flip the global history bit corresponding to this prediction
-  // We know how many predictions there have since been by the size of the FTQ
-  if (prevPrediction != taken) globalHistory_ ^= (1 << (FTQ_.size()));
+  // Update global history if prediction was incorrect.
+  // Bit-flip the global history bit corresponding to this prediction; offset
+  // = number of younger predictions still in flight (FTQ size). Three
+  // correctness guards over the original `globalHistory_ ^= (1 << FTQ_.size())`:
+  //   1. `1` is `int`; when FTQ_.size() >= 32 the shift is UB. Use 1ULL and a
+  //      hard `< 64` guard so the shift itself is always defined.
+  //   2/3. (THE 3rd-bug fix, 2026-05-31) predict()/addToFTQ()/flush() keep
+  //      globalHistory_ confined to globalHistoryMask_, but this XOR was the one
+  //      site that wrote globalHistory_ WITHOUT re-masking. When the corrected
+  //      bit position (FTQ_.size()) is one the mask drops, two things go wrong
+  //      together: (a) this branch's contribution has already been masked out of
+  //      the live history window, so the correction is semantically moot; and
+  //      (b) far worse, the flipped bit is set OUTSIDE the mask, and predict()
+  //      only re-masks AFTER its left shift — so the stray bit survives, shifts
+  //      into a masked (live) position next cycle, and corrupts the effective
+  //      history. That leak is gated on the FTQ_.size() distribution, which is
+  //      set by in-flight branch density, which is set by load latency. Hence
+  //      lowering LSQ-L1 Access-Latency 4→3 ballooned Dhrystone retired-missrate
+  //      10.6%→25% while leaving CoreMark (different density) almost untouched —
+  //      the workload-divergent, non-predictor-parameter signature flagged in
+  //      perceptron-load-latency-desync-2026-05-29. Only flip when the bit is
+  //      actually live in the masked history; then the result stays within mask
+  //      automatically (no stray-bit leak).
+  if (prevPrediction != taken && FTQ_.size() < 64) {
+    const uint64_t correctionBit = 1ULL << FTQ_.size();
+    if (globalHistoryMask_ & correctionBit) globalHistory_ ^= correctionBit;
+  }
 }
 
 void PerceptronPredictor::flush(uint64_t address) {
@@ -159,12 +193,18 @@ void PerceptronPredictor::flush(uint64_t address) {
     rasHistory_.erase(it);
   }
 
-  // If possible, pop instruction from FTQ
-  // if (!FTQ_.empty()) FTQ_.pop_back();
-  FTQ_.pop_back();
-
-  // Roll back global history
-  globalHistory_ >>= 1;
+  // Restore pre-predict GHR from the FTQ entry, then pop. The previous
+  // `globalHistory_ >>= 1` was wrong: predict() does
+  // `(GHR << 1 | bit) & globalHistoryMask_`, which masks off the MSB; flush's
+  // right-shift restores bit 0 to zero but cannot recover the dropped MSB,
+  // permanently zeroing the oldest history bit on every flush. The desync
+  // amplifies under faster mispredict resolution (more flushes/sec), surfacing
+  // as Dhrystone branch.missrate 10.6%→25% when LSQ-L1 Access-Latency was
+  // lowered 4→3. Save-and-restore is unambiguous.
+  if (!FTQ_.empty()) {
+    globalHistory_ = FTQ_.back().second;
+    FTQ_.pop_back();
+  }
 }
 
 void PerceptronPredictor::addToFTQ(uint64_t address, bool taken) {

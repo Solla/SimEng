@@ -27,11 +27,17 @@ HostFileMMap HostBackedFileMMaps::mapfd(int fd, size_t len, off_t offset) {
   off_t fstatFileSize = statbuf->st_size;
   free(statbuf);
   if (offset + len > fstatFileSize) {
-    std::cerr << "[SimEng:HostBackedFileMMaps] Tried to create host backed "
-                 "file mmap with offset and size greater "
-                 "than file size."
-              << std::endl;
-    std::exit(1);
+    // Linux file-backed mmap legally allows len > file region: bytes past EOF
+    // are zero-filled (and would SIGBUS only on access past the rounded-up
+    // page). glibc's loader uses this routinely. Clamp len to the available
+    // file bytes; the caller's VMA covers the full simulated `len` and the
+    // beyond-EOF tail is treated as zero (simulator memory is zero-initialised).
+    std::cerr << "[SimEng:HostBackedFileMMaps] WARN: clamping host-backed mmap "
+                 "len from " << len << " to " << (fstatFileSize - offset)
+              << " (file size " << fstatFileSize << ", offset " << offset
+              << ")." << std::endl;
+    len = fstatFileSize - offset;
+    if (len == 0) len = 1; // avoid the len<=0 abort below
   }
   if (len <= 0) {
     std::cerr << "[SimEng:HostBackedFileMMaps] Cannot create host backed file "
