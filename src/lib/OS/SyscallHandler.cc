@@ -894,7 +894,7 @@ void SyscallHandler::handleSyscall() {
 }
 
 std::vector<char> SyscallHandler::readUntimedPaged(
-    uint64_t vaddr, uint64_t length, uint64_t& faultCode) {
+    uint64_t vaddr, uint64_t length, uint64_t& faultCode, bool stopAtNul) {
   std::vector<char> out;
   out.reserve(length);
   faultCode = 0;
@@ -918,6 +918,13 @@ std::vector<char> SyscallHandler::readUntimedPaged(
       out.insert(out.end(), d.begin(), d.end());
     }
     off += chunk;
+    // For a C-string read, stop at the NUL terminator: bytes beyond it are not
+    // part of the string, so the next page must not be translated (it may be
+    // unmapped — e.g. a short filename whose buffer ends a mapping — and would
+    // otherwise raise a spurious DATA_ABORT). The just-appended chunk is the
+    // last `chunk` bytes of `out`.
+    if (stopAtNul && std::find(out.end() - chunk, out.end(), '\0') != out.end())
+      return out;
   }
   return out;
 }
@@ -933,8 +940,8 @@ void SyscallHandler::readStringThen(
   // non-contiguous physical frame). Both a DATA_ABORT and an IGNORED fault
   // mean we cannot form a valid filename, so bail.
   uint64_t faultCode = 0;
-  std::vector<char> data =
-      readUntimedPaged(address + offset, maxLength, faultCode);
+  std::vector<char> data = readUntimedPaged(address + offset, maxLength,
+                                            faultCode, /*stopAtNul=*/true);
   if (faultCode == simeng::OS::masks::faults::pagetable::DATA_ABORT ||
       faultCode == simeng::OS::masks::faults::pagetable::IGNORED) {
     return concludeSyscall({}, true);

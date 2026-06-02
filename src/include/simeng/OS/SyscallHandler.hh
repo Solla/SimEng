@@ -299,9 +299,16 @@ class SyscallHandler {
    * that crosses a page boundary. IGNORED pages read as zeros. `faultCode` is
    * set to the fault of a faulting page (DATA_ABORT takes precedence and stops
    * the read; IGNORED otherwise; 0 if clean). On no DATA_ABORT the returned
-   * buffer is exactly `length` bytes. */
+   * buffer is exactly `length` bytes, unless `stopAtNul` is set.
+   *
+   * If `stopAtNul` is true (C-string reads), the walk stops once a NUL byte is
+   * read, so pages beyond the string terminator are never translated — a short
+   * filename ending a mapping must not fault on the following (possibly
+   * unmapped) page. The returned buffer then ends at the page chunk containing
+   * the NUL. */
   std::vector<char> readUntimedPaged(uint64_t vaddr, uint64_t length,
-                                     uint64_t& faultCode);
+                                     uint64_t& faultCode,
+                                     bool stopAtNul = false);
 
   /** brk syscall: change data segment size. Sets the program break to
    * `addr` if reasonable, and returns the program break. */
