@@ -1,5 +1,6 @@
 #include "simeng/pipeline/LoadStoreQueue.hh"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstdlib>
@@ -25,7 +26,7 @@ LoadStoreQueue::LoadStoreQueue(
     std::function<void(const std::shared_ptr<Instruction>&)> raiseException,
     bool exclusive, uint16_t loadBandwidth, uint16_t storeBandwidth,
     uint16_t permittedRequests, uint16_t permittedLoads,
-    uint16_t permittedStores)
+    uint16_t permittedStores, bool l2lForwarding, uint64_t l2lForwardLatency)
     : completionSlots_(completionSlots),
       forwardOperands_(forwardOperands),
       raiseException_(raiseException),
@@ -39,6 +40,8 @@ LoadStoreQueue::LoadStoreQueue(
       // Set per-cycle limits for each request type
       reqLimits_{permittedLoads, permittedStores} {
   lsqProfile_ = std::getenv("SIMENG_LSQ_PROFILE") != nullptr;
+  l2lForward_ = l2lForwarding;
+  l2lLatency_ = l2lForwardLatency;
 }
 
 LoadStoreQueue::LoadStoreQueue(
@@ -49,7 +52,7 @@ LoadStoreQueue::LoadStoreQueue(
     std::function<void(const std::shared_ptr<Instruction>&)> raiseException,
     bool exclusive, uint16_t loadBandwidth, uint16_t storeBandwidth,
     uint16_t permittedRequests, uint16_t permittedLoads,
-    uint16_t permittedStores)
+    uint16_t permittedStores, bool l2lForwarding, uint64_t l2lForwardLatency)
     : completionSlots_(completionSlots),
       forwardOperands_(forwardOperands),
       raiseException_(raiseException),
@@ -64,6 +67,8 @@ LoadStoreQueue::LoadStoreQueue(
       // Set per-cycle limits for each request type
       reqLimits_{permittedLoads, permittedStores} {
   lsqProfile_ = std::getenv("SIMENG_LSQ_PROFILE") != nullptr;
+  l2lForward_ = l2lForwarding;
+  l2lLatency_ = l2lForwardLatency;
 }
 
 unsigned int LoadStoreQueue::getLoadQueueSpace() const {
@@ -148,6 +153,23 @@ bool LoadStoreQueue::olderStoreHazard(
   return false;
 }
 
+bool LoadStoreQueue::anyOlderStoreOverlaps(
+    const std::shared_ptr<Instruction>& load) const {
+  const uint64_t loadSeqId = load->getSequenceId();
+  const auto& ldAddrs = load->getGeneratedAddresses();
+  for (const auto& entry : storeQueue_) {
+    const auto& store = entry.first;
+    if (store->getSequenceId() >= loadSeqId) continue;  // not older
+    const auto sAddrs = store->getGeneratedAddresses();
+    // Unresolved older store: cannot rule out an overlap.
+    if (sAddrs.size() == 0) return true;
+    for (const auto& s : sAddrs)
+      for (const auto& l : ldAddrs)
+        if (requestsOverlap(s, l)) return true;
+  }
+  return false;
+}
+
 void LoadStoreQueue::startLoad(const std::shared_ptr<Instruction>& insn) {
   // Memory-dependence prediction: a load whose instruction address has
   // previously caused a memory-order violation is conservatively held while
@@ -181,6 +203,69 @@ void LoadStoreQueue::issueLoad(const std::shared_ptr<Instruction>& insn) {
     if (lsqProfile_) lpLoadsEarly_++;
     completedLoads_.push(insn);
   } else {
+    // Load-to-load forwarding HEADROOM probe (profiling only): would this load's
+    // address have matched an older in-flight load, or a recently-accessed
+    // word/line? High hit rates => a forwarding implementation has headroom.
+    if (lsqProfile_ && ld_addresses.size() != 0) {
+      const uint64_t word = ld_addresses[0].address & ~uint64_t(7);
+      const uint64_t line = ld_addresses[0].address & ~uint64_t(63);
+      bool inflExact = false, inflLine = false;
+      for (const auto& kv : requestedLoads_) {
+        if (kv.second->getSequenceId() >= insn->getSequenceId()) continue;
+        for (const auto& a : kv.second->getGeneratedAddresses()) {
+          if ((a.address & ~uint64_t(7)) == word) inflExact = true;
+          if ((a.address & ~uint64_t(63)) == line) inflLine = true;
+        }
+        if (inflExact) break;
+      }
+      lpL2LInflightExact_ += inflExact;
+      lpL2LInflightLine_ += inflLine;
+      bool recExact = false, recLine = false;
+      for (uint64_t w : lpRecentWords_)
+        if (w == word) { recExact = true; break; }
+      for (uint64_t l : lpRecentLines_)
+        if (l == line) { recLine = true; break; }
+      lpL2LRecentExact_ += recExact;
+      lpL2LRecentLine_ += recLine;
+      lpRecentWords_.push_back(word);
+      lpRecentLines_.push_back(line);
+      if (lpRecentWords_.size() > 1024) lpRecentWords_.pop_front();
+      if (lpRecentLines_.size() > 1024) lpRecentLines_.pop_front();
+    }
+    // --- Load-to-load forwarding: serve a single-access load from the
+    // forwarding cache when its exact address+size was recently produced by a
+    // returning load and NO older store overlaps it. The no-overlap check must
+    // be stricter than olderStoreHazard() (which permits exactly-forwardable
+    // overlaps because the normal path store-to-load-forwards them): if we
+    // forwarded those from the cache we would supply stale memory data instead
+    // of the pending store's value. Completes after l2lLatency_ cycles without
+    // a memory access. Multi-access loads fall through to the memory path. ---
+    if (l2lForward_ && ld_addresses.size() == 1) {
+      const auto& target = ld_addresses[0];
+      auto fit = forwardingCache_.find(target.address);
+      // Only run the (more expensive) older-store overlap scan once the cache is
+      // known to hold a wide-enough entry for this load. On the common miss path
+      // this skips the scan entirely, leaving the load's call pattern identical
+      // to a plain memory issue; the && is short-circuit so the forwarding
+      // decision is unchanged.
+      if (fit != forwardingCache_.end() && fit->second.first >= target.size &&
+          !anyOlderStoreOverlaps(insn)) {
+        // Supply exactly the load's access size (the memory path always
+        // returns request-sized data); a larger cached value would corrupt the
+        // load result.
+        insn->supplyData(target.address,
+                         fit->second.second.zeroExtend(target.size, target.size));
+        if (insn->hasAllData()) {
+          insn->execute();
+          if (!insn->exceptionEncountered() && insn->isStoreData())
+            supplyStoreData(insn);
+          forwardCompletionQueue_[tickCounter_ + l2lLatency_].push_back(insn);
+          l2lForwarded_++;
+          if (lsqProfile_) lpLoadsIssued_++;
+          return;
+        }
+      }
+    }
     // Issue the memory request as soon as the address is generated; the
     // memory interface (FixedLatency standalone, or the SST cache element
     // when running under SST) owns ALL access latency. Previously this
@@ -306,6 +391,17 @@ bool LoadStoreQueue::commitStore(const std::shared_ptr<Instruction>& uop) {
     // Still add addresses to requestQueue_ to ensure contention of resources is
     // correctly simulated
     requestStoreQueue_[readyTick].back().reqAddresses.push(addresses[i]);
+    // Invalidate any forwarding-cache line(s) this store overwrites so a later
+    // load to the same address cannot forward stale data.
+    if (l2lForward_ && !forwardingCache_.empty()) {
+      for (auto cit = forwardingCache_.begin(); cit != forwardingCache_.end();) {
+        const memory::MemoryAccessTarget cached{cit->first, cit->second.first};
+        if (requestsOverlap(addresses[i], cached))
+          cit = forwardingCache_.erase(cit);
+        else
+          ++cit;
+      }
+    }
   }
 
   // Check all loads that have requested memory
@@ -395,6 +491,24 @@ void LoadStoreQueue::commitLoad(const std::shared_ptr<Instruction>& uop) {
 }
 
 void LoadStoreQueue::purgeFlushed() {
+  // Drop flushed load-to-load forwarded loads awaiting completion. (The tick
+  // loop also skips flushed entries, but pruning here bounds the structure.)
+  if (l2lForward_) {
+    auto itF = forwardCompletionQueue_.begin();
+    while (itF != forwardCompletionQueue_.end()) {
+      auto& vec = itF->second;
+      vec.erase(std::remove_if(vec.begin(), vec.end(),
+                               [](const std::shared_ptr<Instruction>& i) {
+                                 return i->isFlushed();
+                               }),
+                vec.end());
+      if (vec.empty())
+        itF = forwardCompletionQueue_.erase(itF);
+      else
+        ++itF;
+    }
+  }
+
   // Drop flushed loads held by the memory-dependence predictor
   {
     auto it = pendingDisambiguation_.begin();
@@ -644,6 +758,19 @@ void LoadStoreQueue::tick() {
       continue;
     }
 
+    // Cache the returned value for load-to-load forwarding (exact address).
+    if (l2lForward_) {
+      auto cit = forwardingCache_.find(address);
+      if (cit == forwardingCache_.end()) forwardingCacheOrder_.push_back(address);
+      forwardingCache_[address] = {response.target.size, data};
+      // Cap the cache; reuse is to recent addresses so an oldest-out policy is
+      // sufficient and keeps lookup/memory cheap.
+      while (forwardingCacheOrder_.size() > 4096) {
+        forwardingCache_.erase(forwardingCacheOrder_.front());
+        forwardingCacheOrder_.pop_front();
+      }
+    }
+
     // Supply data to the instruction and execute if it is ready
     const auto& load = itr->second;
     load->supplyData(address, data);
@@ -664,6 +791,19 @@ void LoadStoreQueue::tick() {
     }
   }
   memory_.clearCompletedReads();
+
+  // Complete load-to-load forwarded loads whose forward latency has elapsed.
+  if (l2lForward_) {
+    auto itF = forwardCompletionQueue_.begin();
+    while (itF != forwardCompletionQueue_.end() && itF->first <= tickCounter_) {
+      for (const auto& load : itF->second) {
+        if (load->isFlushed()) continue;
+        lpRecordComplete_(load, /*viaForward=*/true);
+        completedLoads_.push(load);
+      }
+      itF = forwardCompletionQueue_.erase(itF);
+    }
+  }
 
   // Pop from the front of the completed loads queue and send to writeback
   size_t count = 0;
@@ -769,6 +909,15 @@ LoadStoreQueue::getLsqProfile() const {
   for (size_t i = 0; i < 8; i++)
     p.emplace_back(std::string("lsqprof.lat.") + kBucket[i],
                    std::to_string(lpLatBucket_[i]));
+  // Load-to-load forwarding headroom (candidates among loadsIssued).
+  p.emplace_back("lsqprof.l2l.inflightExact",
+                 std::to_string(lpL2LInflightExact_));
+  p.emplace_back("lsqprof.l2l.inflightLine",
+                 std::to_string(lpL2LInflightLine_));
+  p.emplace_back("lsqprof.l2l.recentExact",
+                 std::to_string(lpL2LRecentExact_));
+  p.emplace_back("lsqprof.l2l.recentLine", std::to_string(lpL2LRecentLine_));
+  p.emplace_back("lsqprof.l2l.forwarded", std::to_string(l2lForwarded_));
   return p;
 }
 

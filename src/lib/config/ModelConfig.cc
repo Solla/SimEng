@@ -716,6 +716,22 @@ void ModelConfig::setExpectations(bool isDefault) {
   expectations_["LSQ-L1-Interface"]["Permitted-Stores-Per-Cycle"]
       .setValueBounds<uint16_t>(1, UINT16_MAX);
 
+  // Load-to-load forwarding (optional; default off so configs that omit it,
+  // and the unit-test configs, are unaffected). Models an L1 load/store-buffer
+  // that serves a load from a recently-completed same-address load after
+  // Load-To-Load-Forward-Latency cycles instead of a full memory access.
+  expectations_["LSQ-L1-Interface"].addChild(
+      ExpectationNode::createExpectation<bool>(false, "Load-To-Load-Forwarding",
+                                               true));
+  expectations_["LSQ-L1-Interface"]["Load-To-Load-Forwarding"].setValueSet(
+      std::vector{false, true});
+
+  expectations_["LSQ-L1-Interface"].addChild(
+      ExpectationNode::createExpectation<uint64_t>(
+          1, "Load-To-Load-Forward-Latency", true));
+  expectations_["LSQ-L1-Interface"]["Load-To-Load-Forward-Latency"]
+      .setValueBounds<uint64_t>(0, UINT16_MAX);
+
   // Ports
   expectations_.addChild(ExpectationNode::createExpectation("Ports"));
   expectations_["Ports"].addChild(

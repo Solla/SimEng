@@ -42,7 +42,8 @@ class LoadStoreQueue {
       uint16_t storeBandwidth = UINT16_MAX,
       uint16_t permittedRequests = UINT16_MAX,
       uint16_t permittedLoads = UINT16_MAX,
-      uint16_t permittedStores = UINT16_MAX);
+      uint16_t permittedStores = UINT16_MAX, bool l2lForwarding = false,
+      uint64_t l2lForwardLatency = 1);
 
   /** Constructs a split load/store queue model, simulating discrete queues for
    * load and store instructions, supplying completion slots for loads and an
@@ -57,7 +58,8 @@ class LoadStoreQueue {
       uint16_t storeBandwidth = UINT16_MAX,
       uint16_t permittedRequests = UINT16_MAX,
       uint16_t permittedLoads = UINT16_MAX,
-      uint16_t permittedStores = UINT16_MAX);
+      uint16_t permittedStores = UINT16_MAX, bool l2lForwarding = false,
+      uint64_t l2lForwardLatency = 1);
 
   /** Retrieve the available space for load uops. For combined queue this is the
    * total remaining space. */
@@ -129,6 +131,11 @@ class LoadStoreQueue {
   std::vector<std::pair<std::string, std::string>> getLsqProfile() const;
 
  private:
+  /** True if any older (program-order) store in the queue overlaps the load's
+   * addresses, or has an unresolved address. Stricter than olderStoreHazard():
+   * used to block load-to-load forwarding past a pending store. */
+  bool anyOlderStoreOverlaps(const std::shared_ptr<Instruction>& load) const;
+
   /** Record a load completing (memory return or store-to-load forward):
    * bucket its issue->complete latency and update in-flight accounting.
    * No-op when lsqProfile_ is false. */
@@ -152,6 +159,27 @@ class LoadStoreQueue {
 
   /** A function handler to call to forward the results of a completed load. */
   std::function<void(span<Register>, span<RegisterValue>)> forwardOperands_;
+
+  /** --- Load-to-load forwarding (configured via LSQ-L1-Interface in the model
+   * config; models C1-Ultra L1 load/store-buffer forwarding). A load whose
+   * exact address matches a recently-completed load (and which has no older
+   * overlapping in-flight store) is served from this cache after l2lLatency_
+   * cycles instead of paying a full memory access. The cache is filled by
+   * memory-returning loads and invalidated by committing stores; forwarding is
+   * also blocked while an older store hazards the load, so forwarded data can
+   * never be stale. --- */
+  bool l2lForward_ = false;
+  uint64_t l2lLatency_ = 1;
+  /** Forwarding data cache: word address -> (access size, value). */
+  std::unordered_map<uint64_t, std::pair<uint16_t, RegisterValue>>
+      forwardingCache_;
+  /** Insertion order for forwardingCache_, to cap its size. */
+  std::deque<uint64_t> forwardingCacheOrder_;
+  /** Loads scheduled to complete via forwarding: readyTick -> loads. */
+  std::map<uint64_t, std::vector<std::shared_ptr<Instruction>>>
+      forwardCompletionQueue_;
+  /** Count of loads completed via load-to-load forwarding (stat). */
+  uint64_t l2lForwarded_ = 0;
 
   /** A function handle called upon exception generation. */
   std::function<void(const std::shared_ptr<Instruction>&)> raiseException_;
@@ -265,6 +293,17 @@ class LoadStoreQueue {
   std::array<uint64_t, 8> lpLatBucket_ = {0, 0, 0, 0, 0, 0, 0, 0};
   /** Per-load issue tick (seqId -> tickCounter_ at issue), profiling only. */
   std::unordered_map<uint64_t, uint64_t> lpIssueTick_;
+  /** --- Load-to-load forwarding candidate probe (profiling only). Counts how
+   * many issued loads COULD have been served by an older in-flight load or a
+   * recently-accessed line, i.e. the headroom for a load-to-load forwarding
+   * implementation. Exact = same 8B word; Line = same 64B cache line. --- */
+  uint64_t lpL2LInflightExact_ = 0;
+  uint64_t lpL2LInflightLine_ = 0;
+  uint64_t lpL2LRecentExact_ = 0;
+  uint64_t lpL2LRecentLine_ = 0;
+  /** Ring of recently issued load line-addresses (for reuse measurement). */
+  std::deque<uint64_t> lpRecentLines_;
+  std::deque<uint64_t> lpRecentWords_;
 };
 
 }  // namespace pipeline

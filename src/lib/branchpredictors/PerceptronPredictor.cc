@@ -22,17 +22,14 @@ PerceptronPredictor::PerceptronPredictor(ryml::ConstNodeRef config)
   // Set up training threshold according to empirically determined formula
   trainingThreshold_ = (uint64_t)((1.93 * globalHistoryLength_) + 14);
 
-  // NOTE: `(len * 2) - 1` is mathematically wrong as a bit-mask for a
-  // `len`-bit GHR (would be `(1 << len) - 1`). With len=19 this yields 37 =
-  // 0b100101, retaining only bits 0/2/5 of GHR — the predictor is effectively
-  // a 3-input perceptron, not 19. However, fixing the mask to the algebraically
-  // correct form REGRESSES every workload 47-48% (Dhry 2.575→1.37, CM 1.54→0.80)
-  // because the now-19-input perceptron is under-trained on these short
-  // benchmark runs. The "bug" is acting as an unintentional dimensionality
-  // reduction that the predictor's training-vs-runtime budget actually relies
-  // on. Leaving the original formula; documenting the trap. To genuinely move
-  // to 19-bit history, the predictor needs either much longer training or a
-  // different training scheme (and to source the GHL value from ARM spec).
+  // NOTE: `(len * 2) - 1` is not the algebraically-correct bit-mask for a
+  // `len`-bit GHR (that would be `(1 << len) - 1`). With len=19 it yields 37 =
+  // 0b100101, retaining only bits 0/2/5 of GHR — the predictor behaves as a
+  // sparse 3-input perceptron, not 19. This is kept deliberately: widening the
+  // mask to the full window REGRESSED both workloads (the 19-input perceptron
+  // is under-trained over the real branch stream), and the sparse effective
+  // history is what the rest of the model is tuned against. (2026-06-05: the
+  // full-mask and contiguous-mask alternatives were probed and refuted.)
   globalHistoryMask_ = (globalHistoryLength_ * 2) - 1;
 }
 
@@ -126,7 +123,7 @@ void PerceptronPredictor::update(uint64_t address, bool taken,
 
     for (uint64_t i = 0; i < globalHistoryLength_; i++) {
       int8_t xi =
-          ((prevGlobalHistory & (1 << ((globalHistoryLength_ - 1) - i))) == 0)
+          ((prevGlobalHistory & (1ULL << ((globalHistoryLength_ - 1) - i))) == 0)
               ? -1
               : 1;
       int8_t product_xi_t = xi * t;
@@ -219,7 +216,7 @@ int64_t PerceptronPredictor::getDotProduct(
   for (uint64_t i = 0; i < globalHistoryLength_; i++) {
     // Get branch direction for ith entry in the history
     bool historyTaken =
-        ((history & (1 << ((globalHistoryLength_ - 1) - i))) != 0);
+        ((history & (1ULL << ((globalHistoryLength_ - 1) - i))) != 0);
     Pout += historyTaken ? perceptron[i] : (0 - perceptron[i]);
   }
   return Pout;

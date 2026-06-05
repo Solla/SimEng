@@ -57,7 +57,10 @@ Core::Core(MemoryInterface& instructionMemory, MemoryInterface& dataMemory,
           config["LSQ-L1-Interface"]["Permitted-Loads-Per-Cycle"]
               .as<uint16_t>(),
           config["LSQ-L1-Interface"]["Permitted-Stores-Per-Cycle"]
-              .as<uint16_t>()),
+              .as<uint16_t>(),
+          config["LSQ-L1-Interface"]["Load-To-Load-Forwarding"].as<bool>(),
+          config["LSQ-L1-Interface"]["Load-To-Load-Forward-Latency"]
+              .as<uint64_t>()),
       fetchUnit_(fetchToDecodeBuffer_, instructionMemory,
                  config["Fetch"]["Fetch-Block-Size"].as<uint16_t>(), isa,
                  branchPredictor),
